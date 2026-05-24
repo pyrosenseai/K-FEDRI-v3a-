@@ -14,13 +14,13 @@ COLORS = {
 }
 
 PLOTLY_TEMPLATE = "plotly_dark"
-PLOTLY_BG       = "#000000"
+PLOTLY_BG       = "#1E293B"
 PLOTLY_PAPER_BG = "#0F172A"
 
 _CSS = """
 <style>
 /* 전체 배경 */
-.stApp { background-color: #0F172A; }
+.stApp { background-color: #000000; }
 
 /* 본문 텍스트 전체 */
 .stApp, .stApp p, .stApp li,
