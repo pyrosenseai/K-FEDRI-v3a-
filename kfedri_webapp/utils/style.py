@@ -2,7 +2,7 @@ import streamlit as st
 import plotly.io as pio
 
 COLORS = {
-    "bg":       "#000000",
+    "bg":       "#0F172A",
     "bg_card":  "#1E293B",
     "border":   "#334155",
     "primary":  "#f97316",
@@ -14,7 +14,7 @@ COLORS = {
 }
 
 PLOTLY_TEMPLATE = "plotly_dark"
-PLOTLY_BG       = "#1E293B"
+PLOTLY_BG       = "#000000"
 PLOTLY_PAPER_BG = "#0F172A"
 
 _CSS = """
