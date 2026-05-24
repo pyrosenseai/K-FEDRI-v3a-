@@ -105,6 +105,11 @@ for _, row in display.iterrows():
     tmi_val = row.get("TerrainRiskScore", float("nan"))
     elev_val = row.get("MeanElevation", float("nan"))
 
+    fmi_str = f"{fmi_val:.2f}" if not pd.isna(fmi_val) else "N/A"
+    tmi_str = f"{tmi_val:.2f}" if not pd.isna(tmi_val) else "N/A"
+    elev_str = f"{elev_val:.0f}m" if not pd.isna(elev_val) else "N/A"
+    dom_forest = row.get("DominantForest", "N/A") or "N/A"
+
     popup_html = f"""
     <div style="font-family: sans-serif; min-width: 210px; font-size: 13px;">
         <b style="font-size:15px;">{row['station_name']} (#{int(row['station_id'])})</b><br>
@@ -112,10 +117,10 @@ for _, row in display.iterrows():
         <hr style="margin:6px 0; border-color:#e2e8f0;">
         <b>위험 등급:</b>
         <span style="color:{color}; font-weight:bold;">{label}</span><br>
-        <b>임상위험 (FMI):</b> {fmi_val:.2f if not pd.isna(fmi_val) else 'N/A'}<br>
-        <b>지형위험 (TMI):</b> {tmi_val:.2f if not pd.isna(tmi_val) else 'N/A'}<br>
-        <b>우세임상:</b> {row.get('DominantForest', 'N/A')}<br>
-        <b>평균고도:</b> {f"{elev_val:.0f}m" if not pd.isna(elev_val) else 'N/A'}
+        <b>임상위험 (FMI):</b> {fmi_str}<br>
+        <b>지형위험 (TMI):</b> {tmi_str}<br>
+        <b>우세임상:</b> {dom_forest}<br>
+        <b>평균고도:</b> {elev_str}
     </div>
     """
 
