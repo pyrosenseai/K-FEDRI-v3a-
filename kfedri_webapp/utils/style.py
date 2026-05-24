@@ -20,7 +20,7 @@ PLOTLY_PAPER_BG = "#0F172A"
 _CSS = """
 <style>
 /* 전체 배경 */
-.stApp { background-color: #000000; }
+.stApp { background-color: #00235b; }
 
 /* 본문 텍스트 전체 */
 .stApp, .stApp p, .stApp li,
