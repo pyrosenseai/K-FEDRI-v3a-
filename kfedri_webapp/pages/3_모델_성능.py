@@ -2,8 +2,10 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
+from utils.style import apply_dark_theme
 
 st.set_page_config(page_title="모델 성능", page_icon="🤖", layout="wide")
+apply_dark_theme()
 st.title("🤖 K-FEDRI v3a 모델 성능 분석")
 st.markdown("v2 (기상 11개) vs v3a (기상+임상+지형 29개) | 2025년 Hold-out Test 결과")
 st.divider()

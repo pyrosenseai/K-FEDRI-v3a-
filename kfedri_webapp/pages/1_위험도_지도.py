@@ -4,8 +4,10 @@ import numpy as np
 import folium
 from streamlit_folium import st_folium
 from pathlib import Path
+from utils.style import apply_dark_theme
 
 st.set_page_config(page_title="위험도 지도", page_icon="🗺️", layout="wide")
+apply_dark_theme()
 st.title("🗺️ 전국 산불 위험도 지도")
 
 DATA_DIR = Path(__file__).parents[1] / "data"
@@ -91,7 +93,7 @@ center_lon = display["lon"].mean() if not display.empty else 127.8
 m = folium.Map(
     location=[center_lat, center_lon],
     zoom_start=7 if selected_region == "전체" else 9,
-    tiles="CartoDB positron",
+    tiles="CartoDB dark_matter",
 )
 
 for _, row in display.iterrows():

@@ -3,6 +3,7 @@ import pandas as pd
 import numpy as np
 import plotly.express as px
 from pathlib import Path
+from utils.style import apply_dark_theme
 
 st.set_page_config(
     page_title="K-FEDRI | 산불 위험도 예측",
@@ -10,6 +11,7 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="expanded",
 )
+apply_dark_theme()
 
 DATA_DIR = Path(__file__).parent / "data"
 

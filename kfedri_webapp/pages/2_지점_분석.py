@@ -4,8 +4,10 @@ import numpy as np
 import plotly.graph_objects as go
 import plotly.express as px
 from pathlib import Path
+from utils.style import apply_dark_theme
 
 st.set_page_config(page_title="지점 분석", page_icon="📊", layout="wide")
+apply_dark_theme()
 st.title("📊 ASOS 지점별 상세 분석")
 
 DATA_DIR = Path(__file__).parents[1] / "data"
