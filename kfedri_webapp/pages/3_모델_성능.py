@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
+from pathlib import Path
 from utils.style import apply_dark_theme
 
 st.set_page_config(page_title="모델 성능", page_icon="🤖", layout="wide")
@@ -10,50 +11,86 @@ st.title("🤖 K-FEDRI v3a 모델 성능 분석")
 st.markdown("v2 (기상 11개) vs v3a (기상+임상+지형 29개) | 2025년 Hold-out Test 결과")
 st.divider()
 
-# ── 보고서 기반 성능 데이터 ─────────────────────────────────────────
-perf = pd.DataFrame([
-    {"피처셋": "v2 (기상 11개)", "모델": "LogisticRegression", "피처 수": 11,
-     "ROC-AUC": 0.8450, "PR-AUC": 0.0344, "Top5% Recall": 0.300, "Top10% Recall": None, "F1@0.5": 0.034},
-    {"피처셋": "v2 (기상 11개)", "모델": "LightGBM",           "피처 수": 11,
-     "ROC-AUC": 0.8279, "PR-AUC": 0.0319, "Top5% Recall": 0.293, "Top10% Recall": None, "F1@0.5": 0.045},
-    {"피처셋": "v2 (기상 11개)", "모델": "XGBoost",            "피처 수": 11,
-     "ROC-AUC": 0.8369, "PR-AUC": 0.0291, "Top5% Recall": 0.287, "Top10% Recall": None, "F1@0.5": 0.045},
-    {"피처셋": "v3a (임상+지형 추가)", "모델": "LogisticRegression", "피처 수": 29,
-     "ROC-AUC": 0.8667, "PR-AUC": 0.0386, "Top5% Recall": 0.360, "Top10% Recall": 0.553, "F1@0.5": 0.036},
-    {"피처셋": "v3a (임상+지형 추가)", "모델": "LightGBM",           "피처 수": 29,
-     "ROC-AUC": 0.8747, "PR-AUC": 0.0663, "Top5% Recall": 0.420, "Top10% Recall": 0.573, "F1@0.5": 0.065},
-    {"피처셋": "v3a (임상+지형 추가)", "모델": "XGBoost",            "피처 수": 29,
-     "ROC-AUC": 0.8781, "PR-AUC": 0.0686, "Top5% Recall": 0.393, "Top10% Recall": 0.593, "F1@0.5": 0.055},
-])
+DATA_DIR = Path(__file__).parents[1] / "data"
 
-topk = pd.DataFrame([
-    {"모델": "v3a + LightGBM",           "Top5%": "63/150", "Top10%": "86/150",  "Top20%": "118/150",
-     "Recall@5": 0.420, "Recall@10": 0.573, "Recall@20": 0.787},
-    {"모델": "v3a + XGBoost",            "Top5%": "59/150", "Top10%": "89/150",  "Top20%": "117/150",
-     "Recall@5": 0.393, "Recall@10": 0.593, "Recall@20": 0.780},
-    {"모델": "v3a + LogisticRegression", "Top5%": "54/150", "Top10%": "83/150",  "Top20%": "116/150",
-     "Recall@5": 0.360, "Recall@10": 0.553, "Recall@20": 0.773},
-])
+MODEL_MAP = {"LogReg": "LogisticRegression", "LightGBM": "LightGBM", "XGBoost": "XGBoost"}
+SET_MAP   = {"v2_baseline": "v2 (기상 11개)", "v3a": "v3a (임상+지형 추가)"}
 
-importance = pd.DataFrame([
-    {"순위": 1,  "피처": "DrynessRisk",                   "카테고리": "기상", "중요도 (%)": 12.1},
-    {"순위": 2,  "피처": "Dry7",                          "카테고리": "기상", "중요도 (%)": 5.2},
-    {"순위": 3,  "피처": "imsang_ForestRiskScore (FMI)",  "카테고리": "임상", "중요도 (%)": 4.6},
-    {"순위": 4,  "피처": "dem_FlatRatio",                 "카테고리": "지형", "중요도 (%)": 4.1},
-    {"순위": 5,  "피처": "imsang_MixedRatio",             "카테고리": "임상", "중요도 (%)": 3.9},
-    {"순위": 6,  "피처": "Dry30",                         "카테고리": "기상", "중요도 (%)": 3.8},
-    {"순위": 7,  "피처": "Season_sin",                    "카테고리": "계절", "중요도 (%)": 3.8},
-    {"순위": 8,  "피처": "dem_TerrainRiskScore (TMI)",    "카테고리": "지형", "중요도 (%)": 3.7},
-    {"순위": 9,  "피처": "dem_WestRatio",                 "카테고리": "지형", "중요도 (%)": 3.6},
-    {"순위": 10, "피처": "SnowRisk",                      "카테고리": "기상", "중요도 (%)": 3.5},
-])
 
-contribution = pd.DataFrame({
-    "모델":        ["LogisticRegression", "LightGBM", "XGBoost"],
-    "기상 (v2)":   [34.8, 80.7, 41.4],
-    "임상 (임상도)": [13.6, 7.1, 22.9],
-    "지형 (DEM)":  [51.7, 12.3, 35.7],
-})
+@st.cache_data
+def load_data():
+    results    = pd.read_csv(DATA_DIR / "v3_model_results.csv")
+    importance = pd.read_csv(DATA_DIR / "v3_feature_importance.csv")
+
+    results["피처셋"] = results["Feature_Set"].map(SET_MAP)
+    results["모델"]   = results["Model"].map(MODEL_MAP)
+    importance["모델"]   = importance["Model"].map(MODEL_MAP)
+    importance["피처셋"] = importance["Feature_Set"].map(SET_MAP)
+    return results, importance
+
+
+results, importance = load_data()
+
+# ── perf 테이블 ────────────────────────────────────────────────────
+perf = results.rename(columns={
+    "N_Features":         "피처 수",
+    "ROC_AUC":            "ROC-AUC",
+    "PR_AUC":             "PR-AUC",
+    "TopK_Recall_5pct":   "Top5% Recall",
+    "TopK_Recall_10pct":  "Top10% Recall",
+    "F1_05":              "F1@0.5",
+})[["피처셋", "모델", "피처 수", "ROC-AUC", "PR-AUC", "Top5% Recall", "Top10% Recall", "F1@0.5"]]
+
+# ── topk 테이블 ────────────────────────────────────────────────────
+total_fires = int(results["TP"].iloc[0] + results["FN"].iloc[0])   # 150
+
+topk_rows = []
+for _, r in results[results["Feature_Set"] == "v3a"].iterrows():
+    topk_rows.append({
+        "모델":      f"v3a + {r['모델']}",
+        "Top5%":    f"{int(r['TopK_Detected_5pct'])}/{total_fires}",
+        "Top10%":   f"{int(r['TopK_Detected_10pct'])}/{total_fires}",
+        "Top20%":   f"{int(r['TopK_Detected_20pct'])}/{total_fires}",
+        "Recall@5":  r["TopK_Recall_5pct"],
+        "Recall@10": r["TopK_Recall_10pct"],
+        "Recall@20": r["TopK_Recall_20pct"],
+    })
+topk = pd.DataFrame(topk_rows).sort_values("Recall@5", ascending=False)
+
+
+def feat_category(feat: str) -> str:
+    if feat.startswith("imsang_"): return "임상"
+    if feat.startswith("dem_"):    return "지형"
+    if feat in ("Season_sin", "Season_cos"): return "계절"
+    return "기상"
+
+
+def build_importance_top(model_name: str, fset: str = "v3a", top_n: int = 15):
+    df = importance[(importance["모델"] == model_name) &
+                    (importance["피처셋"] == SET_MAP[fset])].copy()
+    df["Importance"] = df["Importance"].abs()
+    total = df["Importance"].sum()
+    df["중요도 (%)"] = (df["Importance"] / total * 100).round(2)
+    df["카테고리"]   = df["Feature"].apply(feat_category)
+    df["피처"]       = df["Feature"]
+    return df.nlargest(top_n, "중요도 (%)")[["피처", "카테고리", "중요도 (%)"]].reset_index(drop=True)
+
+
+def build_contribution():
+    v3_imp = importance[importance["피처셋"] == "v3a (임상+지형 추가)"].copy()
+    v3_imp["Importance"] = v3_imp["Importance"].abs()
+    v3_imp["카테고리"] = v3_imp["Feature"].apply(feat_category).map({
+        "기상": "기상 (v2)", "계절": "기상 (v2)",
+        "임상": "임상 (임상도)", "지형": "지형 (DEM)"
+    })
+    rows = []
+    for model, grp in v3_imp.groupby("모델"):
+        total = grp["Importance"].sum()
+        for cat, sg in grp.groupby("카테고리"):
+            rows.append({"모델": model, "카테고리": cat,
+                         "기여도 (%)": round(sg["Importance"].sum() / total * 100, 1)})
+    return pd.DataFrame(rows)
+
 
 # ── 탭 ───────────────────────────────────────────────────────────
 tab1, tab2, tab3, tab4 = st.tabs(
@@ -62,49 +99,42 @@ tab1, tab2, tab3, tab4 = st.tabs(
 # ── Tab 1: 성능 비교 ──────────────────────────────────────────────
 with tab1:
     st.subheader("v2 vs v3a 성능 비교표")
-    disp_cols = ["피처셋", "모델", "피처 수", "ROC-AUC", "PR-AUC", "Top5% Recall", "F1@0.5"]
 
     def highlight_max(s):
-        return ["background-color: #dcfce7; font-weight:bold"
+        return ["background-color:#431407; font-weight:bold"
                 if v == s.max() else "" for v in s]
 
     st.dataframe(
-        perf[disp_cols].style.apply(
+        perf.style.apply(
             highlight_max, subset=["ROC-AUC", "PR-AUC", "Top5% Recall"]
         ).format({"ROC-AUC": "{:.4f}", "PR-AUC": "{:.4f}",
-                  "Top5% Recall": "{:.3f}", "F1@0.5": "{:.3f}"}),
+                  "Top5% Recall": "{:.3f}", "Top10% Recall": "{:.3f}", "F1@0.5": "{:.3f}"}),
         use_container_width=True,
         hide_index=True,
     )
 
     st.divider()
     c1, c2 = st.columns(2)
-
     color_map = {
-        "v2 (기상 11개)": "#94a3b8",
-        "v3a (임상+지형 추가)": "#f97316",
+        "v2 (기상 11개)":        "#94a3b8",
+        "v3a (임상+지형 추가)":  "#f97316",
     }
 
     with c1:
-        fig = px.bar(
-            perf, x="모델", y="ROC-AUC", color="피처셋",
-            barmode="group", title="ROC-AUC 비교",
-            color_discrete_map=color_map,
-        )
+        fig = px.bar(perf, x="모델", y="ROC-AUC", color="피처셋",
+                     barmode="group", title="ROC-AUC 비교",
+                     color_discrete_map=color_map)
         fig.update_yaxes(range=[0.80, 0.895])
         fig.update_layout(legend_title_text="", height=320)
         st.plotly_chart(fig, use_container_width=True)
 
     with c2:
-        fig = px.bar(
-            perf, x="모델", y="PR-AUC", color="피처셋",
-            barmode="group", title="PR-AUC 비교",
-            color_discrete_map=color_map,
-        )
+        fig = px.bar(perf, x="모델", y="PR-AUC", color="피처셋",
+                     barmode="group", title="PR-AUC 비교",
+                     color_discrete_map=color_map)
         fig.update_layout(legend_title_text="", height=320)
         st.plotly_chart(fig, use_container_width=True)
 
-    # 개선량 요약
     st.subheader("v3a 추가로 인한 성능 개선량")
     improve = []
     for model in ["LogisticRegression", "LightGBM", "XGBoost"]:
@@ -112,94 +142,89 @@ with tab1:
         v3 = perf[(perf["피처셋"] == "v3a (임상+지형 추가)") & (perf["모델"] == model)].iloc[0]
         improve.append({
             "모델": model,
-            "ROC-AUC 개선": f"+{(v3['ROC-AUC'] - v2['ROC-AUC'])*100:.2f}%p",
-            "PR-AUC 개선": f"+{(v3['PR-AUC'] - v2['PR-AUC'])*100:.2f}%p",
-            "Top5% Recall 개선": f"+{(v3['Top5% Recall'] - v2['Top5% Recall'])*100:.1f}%p",
+            "ROC-AUC 개선":       f"+{(v3['ROC-AUC']       - v2['ROC-AUC'])       * 100:.2f}%p",
+            "PR-AUC 개선":        f"+{(v3['PR-AUC']        - v2['PR-AUC'])        * 100:.2f}%p",
+            "Top5% Recall 개선":  f"+{(v3['Top5% Recall']  - v2['Top5% Recall'])  * 100:.1f}%p",
         })
     st.dataframe(pd.DataFrame(improve), use_container_width=True, hide_index=True)
 
 # ── Tab 2: Top-K 분석 ─────────────────────────────────────────────
 with tab2:
-    st.subheader("Top-K Recall 분석 (Test set: 총 150건 산불)")
+    st.subheader(f"Top-K Recall 분석 (Test set: 총 {total_fires}건 산불)")
     st.info("**Top-K Recall**: 상위 K% 고위험 예측 지점 중 실제 산불이 얼마나 포함되었는지")
 
     st.dataframe(
         topk.style.format({
             "Recall@5": "{:.3f}", "Recall@10": "{:.3f}", "Recall@20": "{:.3f}"
         }).highlight_max(subset=["Recall@5", "Recall@10", "Recall@20"],
-                         color="#dcfce7"),
+                         props="background-color:#431407; font-weight:bold"),
         use_container_width=True,
         hide_index=True,
     )
 
     st.divider()
-
     fig_topk = go.Figure()
-    colors = {"v3a + LightGBM": "#f97316",
-              "v3a + XGBoost": "#3b82f6",
+    colors = {"v3a + LightGBM": "#f97316", "v3a + XGBoost": "#3b82f6",
               "v3a + LogisticRegression": "#94a3b8"}
 
     for _, r in topk.iterrows():
         fig_topk.add_trace(go.Scatter(
             x=[5, 10, 20],
             y=[r["Recall@5"], r["Recall@10"], r["Recall@20"]],
-            mode="lines+markers",
-            name=r["모델"],
+            mode="lines+markers", name=r["모델"],
             line=dict(color=colors.get(r["모델"], "#6b7280"), width=2),
             marker=dict(size=8),
         ))
 
     fig_topk.update_layout(
         title="Top-K% Recall 곡선 (v3a)",
-        xaxis_title="상위 K%",
-        yaxis_title="Recall",
+        xaxis_title="상위 K%", yaxis_title="Recall",
         xaxis=dict(tickvals=[5, 10, 20], ticktext=["Top 5%", "Top 10%", "Top 20%"]),
-        yaxis=dict(range=[0, 1]),
-        height=350,
+        yaxis=dict(range=[0, 1]), height=350,
         legend=dict(orientation="h", y=-0.2),
     )
     st.plotly_chart(fig_topk, use_container_width=True)
 
-    st.markdown("""
+    st.markdown(f"""
     **해석:**
-    - **LightGBM**이 Top5% Recall 0.420으로 **조기 경보에 최적**
-      → 전체의 5% 지점만 모니터링해도 실제 산불 150건 중 63건(42%) 포착
+    - **LightGBM**이 Top5% Recall {topk[topk['모델']=='v3a + LightGBM']['Recall@5'].values[0]:.3f}로 **조기 경보에 최적**
     - **XGBoost**는 ROC/PR AUC 기준 전반적 성능이 가장 우수
     - **LogisticRegression**은 해석 가능성이 높아 설명 필요 상황에 적합
     """)
 
 # ── Tab 3: 피처 중요도 ────────────────────────────────────────────
 with tab3:
-    st.subheader("XGBoost v3a 피처 중요도 Top 10")
+    col_sel1, col_sel2 = st.columns([2, 2])
+    with col_sel1:
+        sel_model = st.selectbox("모델 선택", ["LightGBM", "XGBoost", "LogisticRegression"],
+                                 key="imp_model")
+    with col_sel2:
+        top_n = st.slider("상위 피처 수", 5, 29, 15, key="imp_topn")
 
-    cat_colors = {
-        "기상": "#3b82f6",
-        "임상": "#22c55e",
-        "지형": "#f97316",
-        "계절": "#a855f7",
-    }
+    imp_df = build_importance_top(sel_model, fset="v3a", top_n=top_n)
+
+    cat_colors = {"기상": "#3b82f6", "임상": "#22c55e",
+                  "지형": "#f97316", "계절": "#a855f7"}
 
     fig_imp = px.bar(
-        importance.sort_values("중요도 (%)"),
+        imp_df.sort_values("중요도 (%)"),
         x="중요도 (%)", y="피처",
-        color="카테고리",
-        orientation="h",
+        color="카테고리", orientation="h",
         color_discrete_map=cat_colors,
         text="중요도 (%)",
+        title=f"{sel_model} v3a 피처 중요도 Top {top_n} (정규화)",
     )
     fig_imp.update_traces(texttemplate="%{text:.1f}%", textposition="outside")
-    fig_imp.update_layout(height=380, margin=dict(t=20, r=60),
-                          legend_title_text="카테고리")
+    fig_imp.update_layout(height=max(350, top_n * 26),
+                          margin=dict(t=40, r=70), legend_title_text="카테고리")
     st.plotly_chart(fig_imp, use_container_width=True)
 
     st.divider()
-    st.subheader("모델별 피처 그룹 기여도")
+    st.subheader("모델별 피처 그룹 기여도 (v3a)")
 
-    contrib_melt = contribution.melt(
-        id_vars="모델", var_name="카테고리", value_name="기여도 (%)"
-    )
+    contrib_df = build_contribution()
     fig_contrib = px.bar(
-        contrib_melt, x="모델", y="기여도 (%)", color="카테고리",
+        contrib_df, x="모델", y="기여도 (%)", color="카테고리",
         barmode="stack",
         color_discrete_map={
             "기상 (v2)": "#3b82f6",
@@ -207,15 +232,14 @@ with tab3:
             "지형 (DEM)": "#f97316",
         },
     )
-    fig_contrib.update_layout(height=320, legend_title_text="",
-                               yaxis_title="기여도 (%)")
+    fig_contrib.update_layout(height=320, legend_title_text="", yaxis_title="기여도 (%)")
     st.plotly_chart(fig_contrib, use_container_width=True)
 
     st.markdown("""
     **관찰:**
-    - **XGBoost**: 기상 41.4% + 임상 22.9% + 지형 35.7% → v3 피처를 가장 고르게 활용
-    - **LightGBM**: DrynessRisk 단일 42% 집중 → 건조 지수에 강한 의존성
-    - **LogisticRegression**: 지형 51.7% → 지형 방위가 선형 판별에 큰 역할
+    - **XGBoost**: 기상·임상·지형을 가장 고르게 활용
+    - **LightGBM**: DrynessRisk 중심 → 건조 지수에 강한 의존성
+    - **LogisticRegression**: 지형 방위 비율이 선형 판별에 큰 역할
     """)
 
 # ── Tab 4: 모델 설명 ──────────────────────────────────────────────
@@ -239,19 +263,31 @@ with tab4:
 | **T** 지형 | TMI (TerrainRiskScore), Slope, Aspect 등 | 남향·경사 위험지수 |
 | **H** 인문 | WeekendRisk | 주말·공휴일 행락 활동 |
 
-        **학습 설정**
-        - Train: 2022-01-01 ~ 2024-12-31 (99,820행 | 양성률 0.725%)
-        - Test : 2025-01-01 ~ 2025-09-11 (29,996행 | 양성률 0.500%)
-        - 불균형 처리: class_weight='balanced' (LogReg) / scale_pos_weight (LightGBM·XGBoost)
+**학습 설정**
+- Train: 2022-01-01 ~ 2024-12-31 (99,820행 | 양성률 0.725%)
+- Test : 2025-01-01 ~ 2025-09-11 (29,996행 | 양성률 0.500%)
+- 불균형 처리: class_weight='balanced' (LogReg) / scale_pos_weight (LightGBM·XGBoost)
         """)
 
     with col_r:
+        # 최고 성능 수치 동적으로 계산
+        best_roc  = results.loc[results["ROC_AUC"].idxmax()]
+        best_topk = results.loc[results["TopK_Recall_5pct"].idxmax()]
+
         st.subheader("모델 선택 가이드")
-        st.success("**XGBoost v3a**\n\nROC-AUC 0.8781 · PR-AUC 0.0686\n"
-                   "→ 종합 성능 최고 → **일반 위험도 서비스** 권장")
-        st.warning("**LightGBM v3a**\n\nTop5% Recall 0.420 (63/150건)\n"
-                   "→ 조기경보 최적 → **긴급 산불 경보** 권장")
-        st.info("**LogisticRegression v3a**\n\nROC-AUC 0.8667\n"
+        st.success(
+            f"**{best_roc['모델']} v3a**\n\n"
+            f"ROC-AUC {best_roc['ROC_AUC']:.4f} · PR-AUC {best_roc['PR_AUC']:.4f}\n"
+            "→ 종합 성능 최고 → **일반 위험도 서비스** 권장"
+        )
+        st.warning(
+            f"**{best_topk['모델']} v3a**\n\n"
+            f"Top5% Recall {best_topk['TopK_Recall_5pct']:.3f} "
+            f"({int(best_topk['TopK_Detected_5pct'])}/{total_fires}건)\n"
+            "→ 조기경보 최적 → **긴급 산불 경보** 권장"
+        )
+        st.info("**LogisticRegression v3a**\n\nROC-AUC "
+                f"{results[results['모델']=='LogisticRegression']['ROC_AUC'].max():.4f}\n"
                 "→ 계수 해석 가능 → **정책·보고서 설명** 권장")
 
         st.divider()

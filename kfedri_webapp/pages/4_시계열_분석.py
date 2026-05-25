@@ -63,15 +63,22 @@ with st.sidebar:
     st.divider()
 
     # 모델 선택
+    def col_label(c):
+        # v2_baseline_LightGBM_proba → "v2 LightGBM"
+        # v3a_XGBoost_proba          → "v3a XGBoost"
+        c_no = c.replace("_proba", "")
+        if c_no.startswith("v2"):
+            model_part = c_no.split("_")[-1]
+            return f"v2  {model_part}"
+        elif c_no.startswith("v3"):
+            model_part = c_no.split("_")[-1]
+            return f"v3a {model_part}"
+        return c
+
     model_choice = st.radio(
         "예측 모델",
         options=proba_cols,
-        format_func=lambda c: (
-            "LightGBM v3a" if "light" in c.lower() or "lgb" in c.lower()
-            else "XGBoost v3a" if "xgb" in c.lower()
-            else "LogisticRegression v3a" if "log" in c.lower()
-            else c
-        ),
+        format_func=col_label,
     )
 
     st.divider()
