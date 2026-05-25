@@ -18,7 +18,7 @@ PRED_PATH = DATA_DIR / "v3_predictions.csv"
 if not PRED_PATH.exists():
     st.warning(
         "**v3_predictions.csv** 파일이 없습니다.\n\n"
-        "팀원에게 `step6.py` 실행 후 아래 파일을 `data/` 폴더에 추가해달라고 요청하세요.\n\n"
+        "`step6.py` 실행 후 아래 파일을 `data/` 폴더에 추가하세요.\n\n"
         "```\nD:\\K_FEDRI_v3\\v3_predictions.csv\n```"
     )
     st.stop()
