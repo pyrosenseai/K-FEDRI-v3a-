@@ -101,7 +101,7 @@ with tab1:
     st.subheader("v2 vs v3a 성능 비교표")
 
     def highlight_max(s):
-        return ["background-color:#431407; font-weight:bold"
+        return ["background-color:#0b82d2; font-weight:bold"
                 if v == s.max() else "" for v in s]
 
     st.dataframe(
