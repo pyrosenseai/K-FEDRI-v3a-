@@ -27,6 +27,16 @@ header[data-testid=stHeader"] {
 background-color = #0F172A; !important
 }
 
+/* 상단 툴바 (Github / Share / 점3개) */
+div[data-testid="stToolbar"] {
+    background-color: #0F172A !important;
+}
+
+/* 헤더 하얀 띠 제거 */
+div[data-testid="stDecoration"] {
+    background: #0F172A !important;
+}
+
 /* 본문 텍스트 전체 */
 .stApp, .stApp p, .stApp li,
 .stApp label, .stApp span,
