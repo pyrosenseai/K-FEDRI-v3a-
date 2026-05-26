@@ -153,8 +153,8 @@ for _, row in display.iterrows():
 # 범례
 legend_html = """
 <div style="position:fixed; bottom:30px; left:30px; z-index:1000;
-     background:white; padding:12px 16px; border-radius:8px;
-     box-shadow:0 2px 8px rgba(0,0,0,0.18); font-family:sans-serif; font-size:13px;">
+     background:black; padding:12px 16px; border-radius:8px;
+     box-shadow:0 2px 8px rgba(0,0,0,0.0); font-family:sans-serif; font-size:13px;">
   <b>위험 등급</b><br>
   <span style="color:#22c55e; font-size:16px;">●</span> 낮음 (0~25)<br>
   <span style="color:#eab308; font-size:16px;">●</span> 보통 (25~50)<br>
