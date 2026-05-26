@@ -234,7 +234,7 @@ fig.update_layout(
     hovermode="x unified",
     legend=dict(orientation="h", y=1.05, x=0),
     margin=dict(t=60, b=20, l=60, r=80),
-    plot_bgcolor= "#000A51",
+    plot_bgcolor= "#0F172A",
 )
 fig.update_yaxes(title_text="예측 확률", range=[0, 1], row=1, col=1)
 fig.update_yaxes(title_text="산불", tickvals=[0, 1], row=2, col=1)
