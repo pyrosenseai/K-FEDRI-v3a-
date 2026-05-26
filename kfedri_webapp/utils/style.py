@@ -128,6 +128,7 @@ div[data-testid="stError"] {
 
 /* subheader 아래 작은 텍스트 */
 div[data-testid="stSubheader"] { color: #fb923c !important; }
+
 </style>
 """
 
