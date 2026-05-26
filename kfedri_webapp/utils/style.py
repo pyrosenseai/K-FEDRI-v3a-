@@ -22,6 +22,11 @@ _CSS = """
 /* 전체 배경 */
 .stApp { background-color: #0F172A; }
 
+/* streamlit 상단 헤더 */
+header[data-testid=stHeader"] {
+background-color = #0F172A; !important
+}
+
 /* 본문 텍스트 전체 */
 .stApp, .stApp p, .stApp li,
 .stApp label, .stApp span,
