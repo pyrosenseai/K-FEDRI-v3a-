@@ -156,8 +156,6 @@ fig = make_subplots(
     subplot_titles=("산불 위험도 예측 확률", "실제 산불 발생"),
 )
 
-fig.set_facecolor('black')
-
 # 예측 확률 (연한 선)
 fig.add_trace(
     go.Scatter(
