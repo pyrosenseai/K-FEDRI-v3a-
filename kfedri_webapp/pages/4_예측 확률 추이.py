@@ -8,7 +8,7 @@ from utils.style import apply_dark_theme, PLOTLY_BG, PLOTLY_PAPER_BG
 
 st.set_page_config(page_title="시계열 분석", page_icon="📈", layout="wide")
 apply_dark_theme()
-st.title("📈 지점별 산불 위험도 시계열")
+st.title("📈 지점별 산불 위험도 추이")
 
 DATA_DIR = Path(__file__).parents[1] / "data"
 PRED_PATH = DATA_DIR / "v3_predictions.csv"
