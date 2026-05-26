@@ -6,7 +6,7 @@ from plotly.subplots import make_subplots
 from pathlib import Path
 from utils.style import apply_dark_theme, PLOTLY_BG, PLOTLY_PAPER_BG
 
-st.set_page_config(page_title="시계열 분석", page_icon="📈", layout="wide")
+st.set_page_config(page_title="예측 확률 추이", page_icon="📈", layout="wide")
 apply_dark_theme()
 st.title("📈 지점별 산불 위험도 추이")
 
