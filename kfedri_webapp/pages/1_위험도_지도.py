@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import folium
+import plotly.express as px
 from streamlit_folium import st_folium
 from pathlib import Path
 from utils.style import apply_dark_theme
@@ -153,9 +154,8 @@ for _, row in display.iterrows():
 # 범례
 legend_html = """
 <div style="position:fixed; bottom:30px; left:30px; z-index:1000;
-     background:black; padding:12px 16px; border-radius:8px;
-     color:rgb(255,255,255);
-     box-shadow:0 2px 8px rgba(0,0,0,0.0); font-family:sans-serif; font-size:13px;">
+     background:white; padding:12px 16px; border-radius:8px;
+     box-shadow:0 2px 8px rgba(0,0,0,0.18); font-family:sans-serif; font-size:13px;">
   <b>위험 등급</b><br>
   <span style="color:#22c55e; font-size:16px;">●</span> 낮음 (0~25)<br>
   <span style="color:#eab308; font-size:16px;">●</span> 보통 (25~50)<br>
@@ -197,6 +197,55 @@ top5["종합위험지수"] = top5["종합위험지수"].round(3)
 top5["FMI (임상)"] = top5["FMI (임상)"].round(2)
 top5["TMI (지형)"] = top5["TMI (지형)"].round(2)
 st.dataframe(top5, use_container_width=True, hide_index=True)
+
+st.divider()
+
+# ── 지역별 평균 위험지수 + 등급 분포 ──────────────────────────────
+col_tbl, col_pie = st.columns([3, 2])
+
+with col_tbl:
+    st.subheader("📊 지역별 평균 위험지수")
+    region_tbl = (
+        display.groupby("region")[["risk_score", "ForestRiskScore", "TerrainRiskScore"]]
+        .mean()
+        .round(3)
+        .rename(columns={
+            "risk_score":        "종합위험지수",
+            "ForestRiskScore":   "FMI (임상)",
+            "TerrainRiskScore":  "TMI (지형)",
+        })
+        .sort_values("종합위험지수", ascending=False)
+        .rename_axis("지역")
+        .reset_index()
+    )
+    st.dataframe(region_tbl, use_container_width=True, hide_index=True)
+
+with col_pie:
+    st.subheader("📈 위험 등급 분포")
+    display["RiskLevel"] = pd.cut(
+        display["risk_score"],
+        bins=[0, 0.25, 0.50, 0.75, 1.01],
+        labels=["낮음", "보통", "높음", "매우높음"],
+    )
+    risk_counts = display["RiskLevel"].value_counts()
+    fig_pie = px.pie(
+        values=risk_counts.values,
+        names=risk_counts.index,
+        color=risk_counts.index,
+        color_discrete_map={
+            "낮음":   "#22c55e",
+            "보통":   "#eab308",
+            "높음":   "#f97316",
+            "매우높음": "#ef4444",
+        },
+        hole=0.35,
+    )
+    fig_pie.update_layout(
+        margin=dict(t=10, b=0, l=0, r=0),
+        height=280,
+        legend=dict(orientation="h", y=-0.15),
+    )
+    st.plotly_chart(fig_pie, use_container_width=True)
 
 st.caption(
     "⚠️ 현재 지도는 임상도·DEM 기반 **정적 위험지수**입니다. "
