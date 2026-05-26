@@ -13,9 +13,6 @@ COLORS = {
     "muted":    "#94a3b8",
 }
 
-[theme]
-backgroundColor = "#F0F0F0"
-
 PLOTLY_TEMPLATE = "plotly_dark"
 PLOTLY_BG       = "#1E293B"
 PLOTLY_PAPER_BG = "#0F172A"
