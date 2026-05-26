@@ -154,7 +154,7 @@ for _, row in display.iterrows():
 # 범례
 legend_html = """
 <div style="position:fixed; bottom:30px; left:30px; z-index:1000;
-     background:balck; padding:12px 16px; border-radius:8px;
+     background:#000054; padding:12px 16px; border-radius:8px;
      color:rgb(255,255,255);
      box-shadow:0 2px 8px rgba(0,0,0,0.18); font-family:sans-serif; font-size:13px;">
   <b>위험 등급</b><br>
