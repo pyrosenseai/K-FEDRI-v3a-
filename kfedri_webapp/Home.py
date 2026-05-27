@@ -121,11 +121,11 @@ if has_preds and proba_cols:
             .rename(columns={
                 "station_name": "지점명",
                 "region":       "지역",
-                model_choice:   "발생 확률",
+                model_choice:   "예측 확률",
                 "Y_ignition":   "실제 산불",
             })
         )
-        top_tbl["발생 확률"] = top_tbl["발생 확률"].round(4)
+        top_tbl["예측 확률"] = top_tbl["예측 확률"].round(4)
         top_tbl["실제 산불"] = top_tbl["실제 산불"].apply(
             lambda v: "🔥" if v == 1 else ""
         )
