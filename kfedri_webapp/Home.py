@@ -1,381 +1,437 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-import plotly.graph_objects as go
-from plotly.subplots import make_subplots
+import plotly.express as px
 from pathlib import Path
-from datetime import timedelta
-from utils.style import apply_dark_theme, PLOTLY_BG, PLOTLY_PAPER_BG
+from utils.style import apply_dark_theme
+from utils.api import (fetch_all_stations, build_weather_features,
+                       build_v3a_features, predict_today, load_model, V3A_FEATURE_COLS)
+from utils.cache import load_today, save_today, cache_mtime
 
-st.set_page_config(page_title="발생 확률 추이", page_icon="📈", layout="wide")
+st.set_page_config(
+    page_title="K-FEDRI | 산불 위험도 예측",
+    page_icon="🔥",
+    layout="wide",
+    initial_sidebar_state="expanded",
+)
 apply_dark_theme()
-st.title("📈 지점별 발생 확률 추이")
 
-DATA_DIR = Path(__file__).parents[1] / "data"
-PRED_PATH = DATA_DIR / "v3_predictions.csv"
+DATA_DIR   = Path(__file__).parent / "data"
+MODELS_DIR = Path(__file__).parent / "models"
+PRED_PATH  = DATA_DIR / "v3_predictions.csv"
 
-
-# ── 예측 파일 존재 확인 ────────────────────────────────────────────
-if not PRED_PATH.exists():
-    st.warning(
-        "**v3_predictions.csv** 파일이 없습니다.\n\n"
-        "`step6.py` 실행 후 아래 파일을 `data/` 폴더에 추가하세요.\n\n"
-        "```\nD:\\K_FEDRI_v3\\v3_predictions.csv\n```"
-    )
-    st.stop()
+# 실시간 예측에 사용할 모델 파일 (있는 것 모두 감지)
+AVAILABLE_MODELS = {}
+for _label, _stem in [("LightGBM v3a", "lgbm_v3a"), ("XGBoost v3a", "xgb_v3a")]:
+    _p = MODELS_DIR / f"{_stem}.pkl"
+    if _p.exists():
+        AVAILABLE_MODELS[_label] = _p
+HAS_MODEL = len(AVAILABLE_MODELS) > 0
+HAS_APIKEY = "kma" in st.secrets and "api_key" in st.secrets.get("kma", {})
 
 
 @st.cache_data
-def load_data():
-    stations = pd.read_csv(DATA_DIR / "asos_stations.csv")
-    preds = pd.read_csv(PRED_PATH, parse_dates=["date"])
+def load_stations():
+    return pd.read_csv(DATA_DIR / "asos_stations.csv")
 
-    # 예측 확률 컬럼 자동 탐지 (LightGBM 우선, 없으면 XGBoost)
+
+@st.cache_data
+def load_preds():
+    return pd.read_csv(PRED_PATH, parse_dates=["date"])
+
+
+stations = load_stations()
+has_preds = PRED_PATH.exists()
+if has_preds:
+    preds = load_preds()
     proba_cols = [c for c in preds.columns if "proba" in c.lower()]
-    lgbm_cols = [c for c in proba_cols if "light" in c.lower() or "lgb" in c.lower()]
-    xgb_cols  = [c for c in proba_cols if "xgb" in c.lower() or "xgboost" in c.lower()]
-
-    return stations, preds, lgbm_cols, xgb_cols, proba_cols
+else:
+    preds, proba_cols = None, []
 
 
-stations, preds_base, lgbm_cols, xgb_cols, proba_cols = load_data()
+def col_label(c):
+    c_no = c.replace("_proba", "")
+    if c_no.startswith("v2"):
+        return f"v2  {c_no.split('_')[-1]}"
+    elif c_no.startswith("v3"):
+        return f"v3a {c_no.split('_')[-1]}"
+    return c
 
-if not proba_cols:
-    st.error("예측 확률 컬럼을 찾을 수 없습니다. CSV 컬럼명을 확인하세요.")
-    st.dataframe(preds_base.head(3))
-    st.stop()
 
-# ── 모델 파일 감지 (API 연장 가능 여부) ──────────────────────────
-MODELS_DIR = Path(__file__).parents[1] / "models"
-_avail_models = {}
-for _stem in ["lgbm_v3a", "xgb_v3a"]:
-    _p = MODELS_DIR / f"{_stem}.pkl"
-    if _p.exists():
-        _avail_models[_stem] = _p
-CAN_EXTEND = (
-    len(_avail_models) > 0
-    and "kma" in st.secrets
-    and "api_key" in st.secrets.get("kma", {})
-)
-
-# ── 사이드바 Part 1: 지점·모델·옵션 선택 ─────────────────────────
+# ── 사이드바 ──────────────────────────────────────────────────────
 with st.sidebar:
     st.subheader("⚙️ 설정")
 
-    # 시도 → 지점 선택
-    regions = ["전체"] + sorted(stations["region"].dropna().unique().tolist())
-    sel_region = st.selectbox("시도", regions)
-    filtered_st = stations if sel_region == "전체" else stations[stations["region"] == sel_region]
-
-    station_opts = {
-        f"{r['station_name']} ({int(r['station_id'])})": int(r["station_id"])
-        for _, r in filtered_st.iterrows()
-    }
-    sel_name = st.selectbox("ASOS 지점", list(station_opts.keys()))
-    sel_id = station_opts[sel_name]
-
-    st.divider()
-
-    # 모델 선택
-    def col_label(c):
-        c_no = c.replace("_proba", "")
-        if c_no.startswith("v2"):
-            return f"v2  {c_no.split('_')[-1]}"
-        elif c_no.startswith("v3"):
-            return f"v3a {c_no.split('_')[-1]}"
-        return c
-
-    model_choice = st.radio(
-        "예측 모델",
-        options=proba_cols,
-        format_func=col_label,
-    )
-
-    st.divider()
-
-    # API 연장 옵션
-    if CAN_EXTEND:
+    if has_preds and proba_cols:
+        model_choice = st.radio(
+            "예측 모델",
+            options=proba_cols,
+            format_func=col_label,
+        )
         st.divider()
-        _last = preds_base["date"].max().date()
-        extend_api = st.checkbox(
-            "📡 API 연장 예측 포함",
-            value=False,
-            help=f"{_last + timedelta(days=1)} 이후를 실시간 API로 예측해 이어붙입니다.",
+        date_min = preds["date"].min().date()
+        date_max = preds["date"].max().date()
+        sel_date = st.date_input(
+            "날짜 선택",
+            value=date_max,
+            min_value=date_min,
+            max_value=date_max,
         )
+        st.caption(f"데이터 범위: {date_min} ~ {date_max}")
     else:
-        extend_api = False
+        st.info("예측 데이터 없음\n\n`v3_predictions.csv`를 data/ 폴더에 추가하면\n실시간 발생 확률이 표시됩니다.")
 
-# ── API 연장 처리 (사이드바 밖에서 실행, 이후 날짜범위 위젯에 반영) ──
-preds      = preds_base.copy()
-ext_banner = None   # 연장 결과 안내 메시지 보관
-
-if extend_api and CAN_EXTEND:
-    last_date  = preds["date"].max()
-    since_date = last_date + timedelta(days=1)
-    cache_key  = f"ext_preds_{since_date.date()}"
-
-    if cache_key not in st.session_state:
-        with st.spinner(
-            f"API 연장 예측 중… "
-            f"({since_date.date()} ~ 어제, {len(_avail_models)}개 모델)"
-        ):
-            try:
-                from utils.api import run_extension_pipeline
-                _imsang = pd.read_csv(DATA_DIR / "asos_imsangdo_features.csv")
-                _dem    = pd.read_csv(DATA_DIR / "asos_dem_features.csv")
-                _key    = st.secrets["kma"]["api_key"]
-
-                ext_df, ext_failed = run_extension_pipeline(
-                    api_key=_key,
-                    station_ids=stations["station_id"].tolist(),
-                    imsang_df=_imsang,
-                    dem_df=_dem,
-                    model_paths=_avail_models,
-                    since_date=since_date,
-                )
-                st.session_state[cache_key] = ext_df
-                st.session_state[f"{cache_key}_failed"] = ext_failed
-            except Exception as _e:
-                st.error(f"연장 예측 오류: {_e}")
-                st.session_state[cache_key] = pd.DataFrame()
-
-    _ext = st.session_state.get(cache_key, pd.DataFrame())
-    if not _ext.empty:
-        preds = (
-            pd.concat([preds, _ext], ignore_index=True, sort=False)
-            .drop_duplicates(subset=["station_id", "date"])
-            .sort_values(["station_id", "date"])
-            .reset_index(drop=True)
-        )
-        # 연장된 proba 컬럼 반영
-        proba_cols = [c for c in preds.columns if "proba" in c.lower()]
-        _failed_n  = len(st.session_state.get(f"{cache_key}_failed", []))
-        ext_banner = (
-            f"📡 API 연장: {since_date.date()} ~ {_ext['date'].max().date()} "
-            f"({len(_ext['date'].unique())}일 추가"
-            + (f", 실패 {_failed_n}개 지점" if _failed_n else "") + ")"
-        )
-
-# ── 사이드바 Part 2: 날짜 범위 (연장된 preds 기준) ───────────────
-with st.sidebar:
-    st.divider()
-    date_min = preds["date"].min().date()
-    date_max = preds["date"].max().date()
-    date_range = st.date_input(
-        "날짜 범위",
-        value=(date_min, date_max),
-        min_value=date_min,
-        max_value=date_max,
-    )
-
-if ext_banner:
-    st.info(ext_banner)
-
-# ── 데이터 필터 ───────────────────────────────────────────────────
-station_data = preds[preds["station_id"] == sel_id].copy()
-
-if len(date_range) == 2:
-    start_d = pd.Timestamp(date_range[0])
-    end_d   = pd.Timestamp(date_range[1])
-    station_data = station_data[
-        (station_data["date"] >= start_d) & (station_data["date"] <= end_d)
-    ]
-
-station_data = station_data.sort_values("date")
-
-if station_data.empty:
-    st.warning("해당 지점·기간 데이터가 없습니다.")
-    st.stop()
-
-# % 단위 컬럼 (차트 표시용)
-station_data["proba_pct"] = station_data[model_choice] * 100
-
-# 실제 산불 — 날짜 필터와 무관하게 해당 지점 전체 기록 사용
-# (날짜 범위 밖 사건도 발생 전 확률 추이 분석에 포함)
-all_stn = preds[preds["station_id"] == sel_id].sort_values("date").copy()
-all_stn["proba_pct"] = all_stn[model_choice] * 100
-
-if "Y_ignition" in all_stn.columns:
-    fires = all_stn[all_stn["Y_ignition"] == 1].copy()
-else:
-    fires = pd.DataFrame()
-
-# ── 요약 지표 ─────────────────────────────────────────────────────
-stn_info = stations[stations["station_id"] == sel_id].iloc[0]
-_det_cnt = int((fires[model_choice] >= 0.5).sum()) if len(fires) > 0 else 0
-_det_rate = f"{_det_cnt}/{len(fires)}건 ({_det_cnt/len(fires)*100:.0f}%)" if len(fires) > 0 else "해당없음"
-
-c1, c2, c3, c4 = st.columns(4)
-with c1:
-    st.metric("지점", stn_info["station_name"])
-with c2:
-    st.metric("분석 기간", f"{len(station_data)}일")
-with c3:
-    st.metric("실제 산불 발생", f"{len(fires)}건")
-with c4:
-    st.metric("탐지율 (≥50%)", _det_rate,
-              help="실제 산불 발생일 중 모델이 50% 이상을 예측한 비율입니다.")
-
+# ── 헤더 ──────────────────────────────────────────────────────────
+st.title("🔥 K-FEDRI 산불 위험도 예측 시스템")
+st.markdown(
+    "**K**orean **F**orest fir**E D**anger **R**ating **I**ndex v3a &nbsp;|&nbsp; "
+    "기상청 ASOS 97개 지점 &nbsp;|&nbsp; 임상도·DEM 피처 통합 &nbsp;|&nbsp; "
+    "LightGBM / XGBoost ML 모델"
+)
 st.divider()
 
-# ── 산불 발생 전 발생 확률 추이 (메인 차트) ───────────────────────
-st.subheader("🔥 산불 발생 전 발생 확률 추이")
+# ── 예측 데이터가 있는 경우 ────────────────────────────────────────
+if has_preds and proba_cols:
+    day_df = (
+        preds[preds["date"] == pd.Timestamp(sel_date)]
+        .merge(stations[["station_id", "station_name", "region"]], on="station_id", how="left")
+    )
 
-if len(fires) == 0:
-    if "Y_ignition" not in preds.columns:
-        st.warning("예측 데이터에 `Y_ignition` 컬럼이 없습니다. 산불 발생 이력을 분석할 수 없습니다.")
-    else:
-        st.info(
-            f"**{stn_info['station_name']}** 지점은 전체 데이터 기간 동안 산불 발생 기록이 없습니다.\n\n"
-            "좌측 사이드바에서 다른 지점을 선택해보세요."
+    if day_df.empty:
+        st.warning(f"{sel_date} 날짜 데이터가 없습니다.")
+        st.stop()
+
+    avg_prob   = day_df[model_choice].mean()
+    high_cnt   = int((day_df[model_choice] >= 0.5).sum())
+    top_row    = day_df.loc[day_df[model_choice].idxmax()]
+    fire_cnt   = int(day_df["Y_ignition"].sum()) if "Y_ignition" in day_df.columns else 0
+
+    # ── 핵심 지표 ─────────────────────────────────────────────────
+    c1, c2, c3, c4, c5 = st.columns(5)
+    with c1:
+        st.metric("선택 날짜", str(sel_date))
+    with c2:
+        st.metric("전국 평균 발생 확률", f"{avg_prob*100:.1f}%",
+                  help="모델 점수를 백분율로 변환한 값입니다. 실제 발생확률이 아닌 지점 간 상대적 위험 순위 비교에 활용하세요.")
+    with c3:
+        st.metric("고위험 지점 (≥50%)", f"{high_cnt}개",
+                  help="모델 점수 ≥ 0.5 지점 수입니다. 50%가 실제 발생 확률을 의미하지 않습니다.")
+    with c4:
+        st.metric("최고 위험 지점", top_row["station_name"])
+    with c5:
+        st.metric("최고 발생 확률", f"{top_row[model_choice]*100:.1f}%",
+                  delta="🔥 산불 발생" if fire_cnt > 0 else None)
+
+    st.divider()
+
+    # ── 레이아웃: 테이블 + 지역별 차트 ─────────────────────────
+    col_l, col_r = st.columns([3, 2])
+
+    with col_l:
+        st.subheader(f"📋 발생 확률 상위 지점 ({col_label(model_choice)})")
+        top_tbl = (
+            day_df[["station_name", "region", model_choice, "Y_ignition"]]
+            .sort_values(model_choice, ascending=False)
+            .head(15)
+            .rename(columns={
+                "station_name": "지점명",
+                "region":       "지역",
+                model_choice:   "발생 확률",
+                "Y_ignition":   "실제 산불",
+            })
         )
-else:
-    N = st.slider("발생 전 분석 기간 (일)", min_value=3, max_value=14, value=7, step=1,
-                  help="산불 발생일 기준 며칠 전까지 확률을 추적할지 설정합니다.")
-
-    trajectories = []
-    for i, fd in enumerate(fires["date"]):
-        window = all_stn[
-            (all_stn["date"] >= fd - pd.Timedelta(days=N)) &
-            (all_stn["date"] <= fd)
-        ].copy()
-        if window.empty:
-            continue
-        window["days_before"] = (window["date"] - fd).dt.days
-        window["fire_idx"]    = i
-        trajectories.append(window[["days_before", "proba_pct", "fire_idx"]])
-
-    if not trajectories:
-        st.warning("선택한 날짜 범위 내에 분석 가능한 산불 사건이 없습니다.")
-    else:
-        traj_df  = pd.concat(trajectories, ignore_index=True)
-        avg_traj = (
-            traj_df.groupby("days_before")["proba_pct"]
-            .mean().reset_index()
-            .sort_values("days_before")
-        )
-
-        # X축 레이블: D-7, D-6 … 발생일
-        avg_traj["label"] = avg_traj["days_before"].apply(
-            lambda d: "발생일" if d == 0 else f"D{d}"
-        )
-
-        def bar_color(p):
-            if p >= 70: return "#ef4444"
-            if p >= 50: return "#f97316"
-            if p >= 25: return "#eab308"
-            return "#22c55e"
-
-        fig_pre = go.Figure()
-
-        # 개별 이벤트 선 (2건 이상일 때만)
-        if len(fires) > 1:
-            for i, grp in traj_df.groupby("fire_idx"):
-                grp = grp.sort_values("days_before")
-                fig_pre.add_trace(go.Scatter(
-                    x=grp["days_before"],
-                    y=grp["proba_pct"],
-                    mode="lines",
-                    line=dict(color="#fca5a5", width=1),
-                    opacity=0.35,
-                    showlegend=(i == 0),
-                    name="개별 산불 사건",
-                ))
-
-        # 평균 막대
-        fig_pre.add_trace(go.Bar(
-            x=avg_traj["days_before"],
-            y=avg_traj["proba_pct"],
-            name="평균 발생 확률",
-            marker_color=[bar_color(p) for p in avg_traj["proba_pct"]],
-            text=[f"{p:.1f}%" for p in avg_traj["proba_pct"]],
-            textposition="outside",
-        ))
-
-        # 50% 탐지 기준선
-        fig_pre.add_hline(
-            y=50, line_dash="dash", line_color="#94a3b8",
-            annotation_text="탐지 기준 (50%)",
-            annotation_position="top right",
+        top_tbl["발생 확률"] = (top_tbl["발생 확률"] * 100).round(1)
+        top_tbl["실제 산불"] = top_tbl["실제 산불"].apply(
+            lambda v: "🔥" if v == 1 else ""
         )
 
-        y_max = max(avg_traj["proba_pct"].max() * 1.25, 60)
-        fig_pre.update_layout(
-            height=380,
+        def highlight_prob(s):
+            styles = []
+            for v in s:
+                if v >= 70:
+                    styles.append("color:#ef4444; font-weight:bold")
+                elif v >= 50:
+                    styles.append("color:#f97316; font-weight:bold")
+                else:
+                    styles.append("")
+            return styles
+
+        st.dataframe(
+            top_tbl.style.apply(highlight_prob, subset=["발생 확률"]),
+            use_container_width=True,
+            hide_index=True,
+        )
+
+    with col_r:
+        st.subheader("🗺️ 지역별 평균 발생 확률")
+        region_avg = (
+            day_df.groupby("region")[model_choice]
+            .mean()
+            .reset_index()
+            .rename(columns={"region": "지역", model_choice: "평균 확률"})
+            .sort_values("평균 확률", ascending=True)
+        )
+        region_avg["평균 확률"] = region_avg["평균 확률"] * 100
+        fig_bar = px.bar(
+            region_avg,
+            x="평균 확률", y="지역",
+            orientation="h",
+            color="평균 확률",
+            color_continuous_scale=["#22c55e", "#eab308", "#f97316", "#ef4444"],
+            range_color=[0, 100],
+            text="평균 확률",
+        )
+        fig_bar.update_traces(texttemplate="%{text:.1f}%", textposition="outside")
+        fig_bar.update_layout(
+            height=420,
+            coloraxis_showscale=False,
+            margin=dict(t=10, b=10, r=60),
             xaxis=dict(
-                title="발생 전 일수",
-                tickmode="array",
-                tickvals=avg_traj["days_before"].tolist(),
-                ticktext=avg_traj["label"].tolist(),
+                title="발생 확률 (%)",
+                range=[0, max(region_avg["평균 확률"].max() * 1.2, 5)],
             ),
-            yaxis=dict(title="발생 확률 (%)", range=[0, y_max]),
-            legend=dict(orientation="h", y=1.08),
-            margin=dict(t=40, b=40, l=60, r=80),
-            bargap=0.25,
         )
-        st.plotly_chart(fig_pre, use_container_width=True)
+        st.plotly_chart(fig_bar, use_container_width=True)
 
-        # 인사이트 한 줄 요약
-        d0   = avg_traj[avg_traj["days_before"] == 0]["proba_pct"]
-        d_n  = avg_traj[avg_traj["days_before"] == avg_traj["days_before"].min()]["proba_pct"]
-        det  = int((fires[model_choice] >= 0.5).sum())
-        if len(d0) and len(d_n):
-            rise = float(d0.iloc[0]) - float(d_n.iloc[0])
-            st.caption(
-                f"발생일 평균 확률 **{d0.iloc[0]:.1f}%** &nbsp;|&nbsp; "
-                f"{N}일 전 대비 **{rise:+.1f}%p** &nbsp;|&nbsp; "
-                f"탐지율(≥50%) **{det}/{len(fires)}건 "
-                f"({det/len(fires)*100:.0f}%)**"
+    st.divider()
+
+# ── 예측 데이터 없을 때: 정적 지표 ───────────────────────────────
+else:
+    dem    = pd.read_csv(DATA_DIR / "asos_dem_features.csv")
+    imsang = pd.read_csv(DATA_DIR / "asos_imsangdo_features.csv")
+    merged = (
+        stations[["station_id", "station_name", "region"]]
+        .merge(dem[["station_id", "TerrainRiskScore"]], on="station_id", how="left")
+        .merge(imsang[["station_id", "ForestRiskScore"]], on="station_id", how="left")
+    )
+    fmi = merged["ForestRiskScore"].fillna(0)
+    tmi = merged["TerrainRiskScore"].fillna(0)
+    fmi_norm = (fmi - fmi.min()) / (fmi.max() - fmi.min() + 1e-8)
+    tmi_norm = (tmi - tmi.min()) / (tmi.max() - tmi.min() + 1e-8)
+    merged["StaticRisk"] = fmi_norm * 0.65 + tmi_norm * 0.35
+
+    high_risk = int((merged["StaticRisk"] >= 0.75).sum())
+    c1, c2, c3, c4, c5 = st.columns(5)
+    with c1: st.metric("관측 지점", "97개")
+    with c2: st.metric("최고 ROC-AUC", "0.8781", "XGBoost v3a")
+    with c3: st.metric("Top5% Recall", "0.420",  "LightGBM v3a")
+    with c4: st.metric("입력 피처",   "29개",    "기상+임상+지형")
+    with c5: st.metric("고위험 지점", f"{high_risk}개", "정적 지형·임상 기준")
+    st.divider()
+    st.info("📂 `v3_predictions.csv`를 data/ 폴더에 추가하면 일별 발생 확률이 표시됩니다.")
+
+# ── 실시간 예측 섹션 ──────────────────────────────────────────────
+st.subheader("⚡ 실시간 예측")
+
+if not HAS_MODEL:
+    st.warning(
+        "모델 파일이 없습니다. `models/lgbm_v3a.pkl` 또는 `models/xgb_v3a.pkl`을 추가하면 활성화됩니다.",
+        icon="🔒",
+    )
+elif not HAS_APIKEY:
+    st.warning(
+        "API 키가 등록되지 않았습니다. `.streamlit/secrets.toml`에 아래 내용을 추가하세요.\n"
+        "```toml\n[kma]\napi_key = \"YOUR_HUB_API_KEY\"\n```",
+        icon="🔑",
+    )
+else:
+    # ── 오늘 캐시 자동 로드 ──────────────────────────────────────
+    _model_labels = list(AVAILABLE_MODELS.keys())
+    if "rt_all_results" not in st.session_state:
+        _cached = load_today(DATA_DIR, _model_labels)
+        if _cached:
+            st.session_state["rt_all_results"] = _cached
+            st.session_state["rt_failed"]      = []
+
+    # ── 모델 선택 + 실행 버튼 ────────────────────────────────────
+    ctrl_l, ctrl_r = st.columns([2, 1])
+    with ctrl_l:
+        if len(AVAILABLE_MODELS) > 1:
+            rt_model_sel = st.radio(
+                "실시간 예측 모델",
+                _model_labels,
+                horizontal=True,
+                help="API 데이터는 한 번만 호출하고, 선택한 모델로 즉시 전환합니다.",
+            )
+        else:
+            rt_model_sel = _model_labels[0]
+            st.caption(f"모델: `{rt_model_sel}`  |  API: 기상청 API허브 ASOS 일자료")
+    with ctrl_r:
+        _has_cache = "rt_all_results" in st.session_state
+        _mtime     = cache_mtime(DATA_DIR, _model_labels) if _has_cache else ""
+        run_btn = st.button(
+            f"{'🔁 갱신' if _has_cache else '🔄 오늘 전국 예측 실행'}",
+            type="secondary" if _has_cache else "primary",
+            use_container_width=True,
+            help=f"오늘 {_mtime} 캐시된 결과를 사용 중입니다. 클릭하면 API를 다시 호출합니다." if _has_cache else None,
+        )
+    if _has_cache and _mtime:
+        st.caption(f"📦 오늘 {_mtime} 캐시된 결과 사용 중 — API 호출 없음")
+
+    # ── 실행 시: API 1회 호출 → 모든 모델 예측 → 캐시 저장 ──────
+    if run_btn:
+        try:
+            imsang_df = pd.read_csv(DATA_DIR / "asos_imsangdo_features.csv")
+            dem_df    = pd.read_csv(DATA_DIR / "asos_dem_features.csv")
+            api_key   = st.secrets["kma"]["api_key"]
+            stn_ids   = stations["station_id"].tolist()
+
+            progress_bar = st.progress(0, text="API 호출 중…")
+
+            def on_progress(done, total):
+                if done == 0:
+                    progress_bar.progress(0.05, text="API 호출 중… 전국 97개 지점 일괄 요청")
+                else:
+                    progress_bar.progress(1.0, text="API 응답 수신 완료 — 피처 계산 및 예측 중…")
+
+            with st.spinner(f"기상청 API 수집 → {len(AVAILABLE_MODELS)}개 모델 예측 중 (약 5~10초)"):
+                raw_df, failed = fetch_all_stations(
+                    stn_ids, api_key, progress_callback=on_progress,
+                )
+                weather_df  = build_weather_features(raw_df)
+                features_df = build_v3a_features(weather_df, imsang_df, dem_df)
+
+                all_results = {}
+                for mname, mpath in AVAILABLE_MODELS.items():
+                    mdl = load_model(mpath)
+                    res = predict_today(features_df, mdl)
+                    all_results[mname] = res
+
+            progress_bar.empty()
+            save_today(DATA_DIR, all_results)          # 캐시 저장
+            st.session_state["rt_all_results"] = all_results
+            st.session_state["rt_failed"]      = failed
+            st.rerun()
+
+        except Exception as e:
+            st.error(f"예측 실행 중 오류: {e}")
+
+    # ── 결과 표시 (session_state 유지 → 모델 전환 시 재실행 불필요) ──
+    if "rt_all_results" in st.session_state:
+        all_results = st.session_state["rt_all_results"]
+        failed      = st.session_state.get("rt_failed", [])
+
+        # 선택 모델이 결과에 없으면 첫 번째로 fallback
+        _cur = rt_model_sel if rt_model_sel in all_results else list(all_results.keys())[0]
+        result_df = all_results[_cur].merge(
+            stations[["station_id", "station_name", "region"]],
+            on="station_id", how="left",
+        )
+
+        today    = result_df["date"].max().date()
+        avg_p    = result_df["proba"].mean()
+        high_cnt = int((result_df["proba"] >= 0.5).sum())
+        top_row  = result_df.loc[result_df["proba"].idxmax()]
+
+        st.success(f"✅ {today} 예측 완료 — {len(all_results)}개 모델 / {len(result_df)}개 지점")
+        if failed:
+            st.caption(f"API 실패 지점: {len(failed)}개 ({failed[:5]}…)")
+
+        r1, r2, r3, r4 = st.columns(4)
+        r1.metric("예측 날짜",             str(today))
+        r2.metric("전국 평균 발생 확률",   f"{avg_p*100:.1f}%",
+                  help="모델 점수를 백분율로 변환한 값입니다. 실제 발생확률이 아닌 지점 간 상대적 위험 순위 비교에 활용하세요.")
+        r3.metric("고위험 지점 (≥50%)",   f"{high_cnt}개",
+                  help="모델 점수 ≥ 0.5 지점 수입니다. 50%가 실제 발생 확률을 의미하지 않습니다.")
+        r4.metric("최고 위험 지점",
+                  f"{top_row['station_name']} ({top_row['proba']*100:.1f}%)")
+
+        # ── 모델 비교 요약표 (2개 이상일 때만) ───────────────────
+        if len(all_results) > 1:
+            st.divider()
+            st.subheader("🤖 모델별 비교")
+            comp_rows = []
+            for mname, res in all_results.items():
+                comp_rows.append({
+                    "모델":              mname,
+                    "전국 평균 확률":    f"{res['proba'].mean()*100:.1f}%",
+                    "고위험 지점 수":    int((res["proba"] >= 0.5).sum()),
+                    "최고 발생 확률":    f"{res['proba'].max()*100:.1f}%",
+                    "현재 선택":        "✅" if mname == _cur else "",
+                })
+            st.dataframe(
+                pd.DataFrame(comp_rows),
+                use_container_width=True,
+                hide_index=True,
             )
 
-with st.expander("⚠️ 발생 확률 수치 해석 주의"):
-    st.caption(
-        "표시된 발생 확률은 모델 점수(predict_proba)를 백분율로 변환한 값입니다. "
-        "class_weight / scale_pos_weight 적용으로 수치 자체를 실제 발생확률로 해석하기 어렵습니다. "
-        "지점 간 상대적 위험 순위 비교 또는 탐지 능력 평가에 활용하세요."
-    )
+        st.divider()
+        rt1, rt2 = st.columns([3, 2])
+
+        with rt1:
+            st.subheader(f"⚠️ 고위험 지점 Top 15 ({_cur})")
+            tbl = (
+                result_df[["station_name", "region", "proba"]]
+                .sort_values("proba", ascending=False)
+                .head(15)
+                .rename(columns={"station_name": "지점명",
+                                 "region":       "지역",
+                                 "proba":        "발생 확률"})
+            )
+            tbl["발생 확률"] = (tbl["발생 확률"] * 100).round(1)
+
+            def highlight_prob(s):
+                return [
+                    "color:#ef4444; font-weight:bold" if v >= 70
+                    else "color:#f97316; font-weight:bold" if v >= 50
+                    else "" for v in s
+                ]
+
+            st.dataframe(
+                tbl.style.apply(highlight_prob, subset=["발생 확률"]),
+                use_container_width=True, hide_index=True,
+            )
+            st.caption("🗺️ 지도 시각화는 **위험도 지도** 페이지에서 확인하세요.")
+
+        with rt2:
+            st.subheader("📊 지역별 평균 발생 확률")
+            reg_avg = (
+                result_df.groupby("region")["proba"]
+                .mean().reset_index()
+                .rename(columns={"region": "지역", "proba": "평균 확률"})
+                .sort_values("평균 확률", ascending=True)
+            )
+            reg_avg["평균 확률"] = reg_avg["평균 확률"] * 100
+            fig_rt = px.bar(
+                reg_avg, x="평균 확률", y="지역",
+                orientation="h", color="평균 확률",
+                color_continuous_scale=["#22c55e", "#eab308", "#f97316", "#ef4444"],
+                range_color=[0, 100], text="평균 확률",
+            )
+            fig_rt.update_traces(texttemplate="%{text:.1f}%", textposition="outside")
+            fig_rt.update_layout(
+                height=400, coloraxis_showscale=False,
+                margin=dict(t=10, b=10, r=60),
+                xaxis=dict(
+                    title="발생 확률 (%)",
+                    range=[0, max(reg_avg["평균 확률"].max() * 1.2, 5)],
+                ),
+            )
+            st.plotly_chart(fig_rt, use_container_width=True)
 
 st.divider()
 
-# ── 월별 평균 발생 확률 히트맵 ────────────────────────────────────
-st.subheader("📅 월별 평균 발생 확률")
+# ── 기능 안내 카드 ─────────────────────────────────────────────────
+st.subheader("📌 주요 기능")
+g1, g2, g3, g4 = st.columns(4)
+with g1:
+    st.info("**🗺️ 위험도 지도**\n\n"
+            "97개 지점 위험도를 한국 지도 위에 색상으로 시각화합니다.\n"
+            "마커 클릭 시 지점 상세 정보 확인 가능합니다.")
+with g2:
+    st.info("**📊 지점 분석**\n\n"
+            "지점별 임상 구성, 지형 방위, FMI/TMI 지수를 분석합니다.\n"
+            "전국 순위 및 레이더 차트를 제공합니다.")
+with g3:
+    st.info("**🤖 모델 성능**\n\n"
+            "v2 vs v3a, LogReg·LightGBM·XGBoost 비교 결과와\n"
+            "피처 중요도 분석 결과를 확인합니다.")
+with g4:
+    st.info("**📈 발생 확률 추이**\n\n"
+            "지점별 산불 발생 전 N일 발생 확률 추이와\n"
+            "월별 평균 발생 확률 히트맵을 확인합니다.")
 
-station_data["year"]  = station_data["date"].dt.year
-station_data["month"] = station_data["date"].dt.month
-
-heatmap_df = (
-    station_data.groupby(["year", "month"])[model_choice]
-    .mean().unstack("month").fillna(0)
-) * 100
-
-month_labels = ["1월","2월","3월","4월","5월","6월",
-                "7월","8월","9월","10월","11월","12월"]
-
-fig_hm = go.Figure(go.Heatmap(
-    z=heatmap_df.values,
-    x=[month_labels[m - 1] for m in heatmap_df.columns],
-    y=[str(y) for y in heatmap_df.index],
-    zmin=0, zmax=100,
-    colorscale=[
-        [0.0, "#f0fdf4"], [0.25, "#86efac"],
-        [0.5, "#fde68a"], [0.75, "#f97316"], [1.0, "#7f1d1d"],
-    ],
-    text=[[f"{v:.1f}%" for v in row] for row in heatmap_df.values],
-    texttemplate="%{text}",
-    hovertemplate="<b>%{y}년 %{x}</b><br>평균 발생 확률: %{z:.1f}%<extra></extra>",
-    colorbar=dict(title="발생 확률 (%)"),
-))
-fig_hm.update_layout(height=200, margin=dict(t=10, b=10, l=60, r=80))
-st.plotly_chart(fig_hm, use_container_width=True)
-
-# ── 산불 발생일 상세 테이블 ───────────────────────────────────────
-if len(fires) > 0:
-    st.subheader(f"🔥 실제 산불 발생일 상세 ({len(fires)}건)")
-    fire_tbl = fires[["date", model_choice]].copy()
-    fire_tbl.columns = ["발생일", "발생 확률"]
-    fire_tbl["발생일"]    = fire_tbl["발생일"].dt.strftime("%Y-%m-%d")
-    fire_tbl["발생 확률"] = (fire_tbl["발생 확률"] * 100).round(1)
-    fire_tbl["탐지 여부"] = fire_tbl["발생 확률"].apply(
-        lambda v: "✅ 탐지 (≥50%)" if v >= 50 else "❌ 미탐지 (<50%)"
-    )
-    st.dataframe(fire_tbl, use_container_width=True, hide_index=True)
+st.caption(
+    "⚠️ 발생 확률은 모델 점수를 백분율로 변환한 값으로, 실제 발생확률이 아닌 상대적 위험 순위 비교에 활용하세요. "
+    "표시된 수치는 2025년 Hold-out Test 결과이며, 기상 API 연동 및 모델 파일(.pkl) 등록 후 실시간 예측이 활성화됩니다."
+)
