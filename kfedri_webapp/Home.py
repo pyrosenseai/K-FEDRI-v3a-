@@ -66,7 +66,7 @@ with st.sidebar:
         )
         st.caption(f"데이터 범위: {date_min} ~ {date_max}")
     else:
-        st.info("예측 데이터 없음\n\n`v3_predictions.csv`를 data/ 폴더에 추가하면\n실시간 예측 확률이 표시됩니다.")
+        st.info("예측 데이터 없음\n\n`v3_predictions.csv`를 data/ 폴더에 추가하면\n실시간 발생 확률이 표시됩니다.")
 
 # ── 헤더 ──────────────────────────────────────────────────────────
 st.title("🔥 K-FEDRI 산불 위험도 예측 시스템")
@@ -98,13 +98,13 @@ if has_preds and proba_cols:
     with c1:
         st.metric("선택 날짜", str(sel_date))
     with c2:
-        st.metric("전국 평균 예측 확률", f"{avg_prob:.3f}")
+        st.metric("전국 평균 발생 확률", f"{avg_prob:.3f}")
     with c3:
         st.metric("고위험 지점 (≥0.5)", f"{high_cnt}개")
     with c4:
         st.metric("최고 위험 지점", top_row["station_name"])
     with c5:
-        st.metric("최고 예측 확률", f"{top_row[model_choice]:.3f}",
+        st.metric("최고 발생 확률", f"{top_row[model_choice]:.3f}",
                   delta="🔥 산불 발생" if fire_cnt > 0 else None)
 
     st.divider()
@@ -113,7 +113,7 @@ if has_preds and proba_cols:
     col_l, col_r = st.columns([3, 2])
 
     with col_l:
-        st.subheader(f"📋 예측 확률 상위 지점 ({col_label(model_choice)})")
+        st.subheader(f"📋 발생 확률 상위 지점 ({col_label(model_choice)})")
         top_tbl = (
             day_df[["station_name", "region", model_choice, "Y_ignition"]]
             .sort_values(model_choice, ascending=False)
@@ -121,11 +121,11 @@ if has_preds and proba_cols:
             .rename(columns={
                 "station_name": "지점명",
                 "region":       "지역",
-                model_choice:   "예측 확률",
+                model_choice:   "발생 확률",
                 "Y_ignition":   "실제 산불",
             })
         )
-        top_tbl["예측 확률"] = top_tbl["예측 확률"].round(4)
+        top_tbl["발생 확률"] = top_tbl["발생 확률"].round(4)
         top_tbl["실제 산불"] = top_tbl["실제 산불"].apply(
             lambda v: "🔥" if v == 1 else ""
         )
