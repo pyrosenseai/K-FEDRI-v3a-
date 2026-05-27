@@ -279,10 +279,12 @@ else:
             progress_bar = st.progress(0, text="API 호출 중…")
 
             def on_progress(done, total):
-                progress_bar.progress(done / total,
-                    text=f"API 호출 중… {done}/{total} 지점")
+                if done == 0:
+                    progress_bar.progress(0.05, text="API 호출 중… 전국 97개 지점 일괄 요청")
+                else:
+                    progress_bar.progress(1.0, text="API 응답 수신 완료 — 피처 계산 및 예측 중…")
 
-            with st.spinner(f"기상청 API 수집 → {len(AVAILABLE_MODELS)}개 모델 예측 중 (약 10초)"):
+            with st.spinner(f"기상청 API 수집 → {len(AVAILABLE_MODELS)}개 모델 예측 중 (약 5~10초)"):
                 raw_df, failed = fetch_all_stations(
                     stn_ids, api_key, progress_callback=on_progress,
                 )
@@ -426,8 +428,8 @@ with g3:
             "피처 중요도 분석 결과를 확인합니다.")
 with g4:
     st.info("**📈 발생 확률 추이**\n\n"
-            "지점별 날짜별 발생 확률 추이, 7일 이동평균,\n"
-            "실제 산불 발생 이력을 시각화합니다.")
+            "지점별 산불 발생 전 N일 발생 확률 추이와\n"
+            "월별 평균 발생 확률 히트맵을 확인합니다.")
 
 st.caption(
     "⚠️ 발생 확률은 모델 점수를 백분율로 변환한 값으로, 실제 발생확률이 아닌 상대적 위험 순위 비교에 활용하세요. "
