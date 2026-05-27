@@ -1,0 +1,11 @@
+# 비밀키 - 절대 커밋 금지
+.streamlit/secrets.toml
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.env
+
+# 모델 파일 (용량 크면 제외, 필요시 주석 해제)
+# models/*.pkl
