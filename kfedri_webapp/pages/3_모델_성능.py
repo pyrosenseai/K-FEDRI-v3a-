@@ -269,6 +269,15 @@ with tab4:
 - 불균형 처리: class_weight='balanced' (LogReg) / scale_pos_weight (LightGBM·XGBoost)
         """)
 
+        with st.expander("⚠️ 발생 확률 수치 해석 주의"):
+            st.caption(
+                "v3a 모델은 **class_weight='balanced'** (LogReg) 또는 "
+                "**scale_pos_weight=N_neg/N_pos** (LightGBM·XGBoost) 설정을 사용합니다. "
+                "이 경우 predict_proba 출력값은 실제 발생확률이 아닌 모델 점수입니다. "
+                "수치 자체보다는 **지점 간 상대적 위험 순위 비교**에 활용하세요. "
+                "(예: 이 지점의 위험도가 전국 상위 5%)"
+            )
+
     with col_r:
         # 최고 성능 수치 동적으로 계산
         best_roc  = results.loc[results["ROC_AUC"].idxmax()]
@@ -299,6 +308,6 @@ with tab4:
            [kma]
            api_key = "YOUR_HUB_API_KEY"
            ```
-        3. 일별 ASOS 기상 데이터 → 29개 피처 변환 → 모델 예측
-        4. `pages/4_실시간_예측.py` 페이지 추가로 활성화
+        3. **홈 화면** 하단 "⚡ 실시간 예측" 섹션에서 실행
+        4. API 1회 호출 후 모든 가용 모델 예측 → 모델 전환 시 재호출 불필요
         """)

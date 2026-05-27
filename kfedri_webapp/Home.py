@@ -110,9 +110,11 @@ if has_preds and proba_cols:
     with c1:
         st.metric("선택 날짜", str(sel_date))
     with c2:
-        st.metric("전국 평균 발생 확률", f"{avg_prob*100:.1f}%")
+        st.metric("전국 평균 발생 확률", f"{avg_prob*100:.1f}%",
+                  help="모델 점수를 백분율로 변환한 값입니다. 실제 발생확률이 아닌 지점 간 상대적 위험 순위 비교에 활용하세요.")
     with c3:
-        st.metric("고위험 지점 (≥50%)", f"{high_cnt}개")
+        st.metric("고위험 지점 (≥50%)", f"{high_cnt}개",
+                  help="모델 점수 ≥ 0.5 지점 수입니다. 50%가 실제 발생 확률을 의미하지 않습니다.")
     with c4:
         st.metric("최고 위험 지점", top_row["station_name"])
     with c5:
@@ -307,8 +309,10 @@ else:
 
         r1, r2, r3, r4 = st.columns(4)
         r1.metric("예측 날짜",             str(today))
-        r2.metric("전국 평균 발생 확률",   f"{avg_p*100:.1f}%")
-        r3.metric("고위험 지점 (≥50%)",   f"{high_cnt}개")
+        r2.metric("전국 평균 발생 확률",   f"{avg_p*100:.1f}%",
+                  help="모델 점수를 백분율로 변환한 값입니다. 실제 발생확률이 아닌 지점 간 상대적 위험 순위 비교에 활용하세요.")
+        r3.metric("고위험 지점 (≥50%)",   f"{high_cnt}개",
+                  help="모델 점수 ≥ 0.5 지점 수입니다. 50%가 실제 발생 확률을 의미하지 않습니다.")
         r4.metric("최고 위험 지점",
                   f"{top_row['station_name']} ({top_row['proba']*100:.1f}%)")
 
@@ -396,6 +400,6 @@ with g4:
             "실제 산불 발생 이력을 시각화합니다.")
 
 st.caption(
-    "⚠️ 예측 확률은 2025년 Hold-out Test 결과입니다. "
-    "기상 API 연동 및 모델 파일(.pkl) 등록 후 실시간 예측이 활성화됩니다."
+    "⚠️ 발생 확률은 모델 점수를 백분율로 변환한 값으로, 실제 발생확률이 아닌 상대적 위험 순위 비교에 활용하세요. "
+    "표시된 수치는 2025년 Hold-out Test 결과이며, 기상 API 연동 및 모델 파일(.pkl) 등록 후 실시간 예측이 활성화됩니다."
 )

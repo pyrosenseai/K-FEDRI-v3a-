@@ -12,6 +12,9 @@ st.title("📊 ASOS 지점별 상세 분석")
 
 DATA_DIR = Path(__file__).parents[1] / "data"
 
+# DEM 5km 버퍼 coverage_ratio < 0.5 지점 (지형 피처 신뢰도 제한)
+DEM_LOW_COVERAGE = {102, 108, 112, 133, 155, 159, 245}
+
 
 @st.cache_data
 def load_data():
@@ -45,6 +48,7 @@ with col_station:
     sel_id = station_opts[sel_name]
 
 row = data[data["station_id"] == sel_id].iloc[0]
+is_low_dem = sel_id in DEM_LOW_COVERAGE
 
 # ── 지점 기본 정보 ────────────────────────────────────────────────
 st.divider()
@@ -96,6 +100,11 @@ with col_l:
         f"{fmi:.3f}",
         delta=f"전국 평균 대비 {fmi - fmi_avg:+.3f}",
         delta_color="inverse",
+        help=(
+            "침엽수·혼효림 비율을 가중 합산한 임상 위험지수입니다. "
+            "ForestRatio는 임상도 폴리곤 내부 분류 비율로, "
+            "버퍼 전체 면적 대비 산림 비율(BufferForestRatio)과 다를 수 있습니다."
+        ),
     )
     dom_forest = row.get("DominantForest", "N/A")
     st.caption(f"우세 임상: **{dom_forest}** | 산림 면적 비율: {row.get('ForestRatio', 0)*100:.1f}%")
@@ -154,10 +163,16 @@ with col_r:
         f"{tmi:.3f}",
         delta=f"전국 평균 대비 {tmi - tmi_avg:+.3f}",
         delta_color="inverse",
+        help=(
+            "DEM(수치표고모델) 기반 지형 위험지수입니다. "
+            "남향·급경사 비율을 반영하며 ASOS 지점 반경 5km 버퍼를 기준으로 산출합니다."
+        ),
     )
     dom_aspect = row.get("DominantAspect", "N/A")
     mean_slope = row.get("MeanSlope", 0) or 0
     st.caption(f"우세 방위: **{dom_aspect}** | 평균 경사: {mean_slope:.1f}°")
+    if is_low_dem:
+        st.caption("⚠️ 이 지점은 5km 버퍼 내 DEM 격자 충분도가 낮아 (coverage < 0.5) 지형 지수의 신뢰도가 제한적입니다.")
 
 # ── 지형 상세 & 전국 순위 ──────────────────────────────────────────
 st.divider()

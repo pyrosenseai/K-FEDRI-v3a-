@@ -315,6 +315,13 @@ fig.update_xaxes(title_text="날짜", row=2, col=1)
 
 st.plotly_chart(fig, use_container_width=True)
 
+with st.expander("⚠️ 발생 확률 수치 해석 주의"):
+    st.caption(
+        "표시된 발생 확률은 모델 점수(predict_proba)를 백분율로 변환한 값입니다. "
+        "class_weight / scale_pos_weight 적용으로 수치 자체를 실제 발생확률로 해석하기 어렵습니다. "
+        "지점 간 상대적 위험 순위 비교 또는 시계열 위험 추이 파악에 활용하세요."
+    )
+
 # ── 월별 위험도 히트맵 ────────────────────────────────────────────
 st.subheader("📅 월별 평균 위험도")
 
