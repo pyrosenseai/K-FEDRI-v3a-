@@ -19,8 +19,8 @@ from pathlib import Path
 # ── 상수 ──────────────────────────────────────────────────────────
 API_URL       = "https://apihub.kma.go.kr/api/typ01/url/kma_sfcdd3.php"
 LOOKBACK_DAYS = 31          # 이동평균 계산에 필요한 과거 일수 (30일 rolling + 1)
-REQUEST_SLEEP = 0.05        # 병렬 워커 내 딜레이 (초)
-MAX_WORKERS   = 10          # 동시 API 호출 수
+REQUEST_SLEEP = 0.3         # 병렬 워커 내 딜레이 (초) - KMA 과부하 방지
+MAX_WORKERS   = 5           # 동시 API 호출 수
 
 API_COLUMNS = [
     "TM", "STN",
@@ -118,6 +118,7 @@ def fetch_all_stations(
         time.sleep(REQUEST_SLEEP)
         return sid, _fetch_one(sid, tm1, tm2, api_key)
 
+    first_error = None
     with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
         futures = {executor.submit(_fetch_with_delay, sid): sid for sid in station_ids}
         for future in as_completed(futures):
@@ -126,14 +127,17 @@ def fetch_all_stations(
                 _, raw = future.result()
                 if not raw.empty:
                     frames.append(raw)
-            except Exception:
+            except Exception as e:
                 failed.append(sid)
+                if first_error is None:
+                    first_error = str(e)
             done_count[0] += 1
             if progress_callback:
                 progress_callback(done_count[0], total)
 
     if not frames:
-        raise RuntimeError("API 호출 성공 지점이 없습니다.")
+        reason = f" (원인: {first_error})" if first_error else ""
+        raise RuntimeError(f"API 호출 성공 지점이 없습니다{reason}.")
 
     return pd.concat(frames, ignore_index=True), failed
 
