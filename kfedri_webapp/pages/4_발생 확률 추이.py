@@ -158,10 +158,10 @@ fig = make_subplots(
     row_heights=[0.75, 0.25],
     shared_xaxes=True,
     vertical_spacing=0.06,
-    subplot_titles=("산불 위험도 예측 확률", "실제 산불 발생"),
+    subplot_titles=("산불 위험도 발생 확률", "실제 산불 발생"),
 )
 
-# 예측 확률 (연한 선)
+# 발생 확률 (연한 선)
 fig.add_trace(
     go.Scatter(
         x=station_data["date"],
