@@ -4,6 +4,7 @@ import numpy as np
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 from pathlib import Path
+from datetime import timedelta
 from utils.style import apply_dark_theme, PLOTLY_BG, PLOTLY_PAPER_BG
 
 st.set_page_config(page_title="예측 확률 추이", page_icon="📈", layout="wide")
@@ -37,14 +38,27 @@ def load_data():
     return stations, preds, lgbm_cols, xgb_cols, proba_cols
 
 
-stations, preds, lgbm_cols, xgb_cols, proba_cols = load_data()
+stations, preds_base, lgbm_cols, xgb_cols, proba_cols = load_data()
 
 if not proba_cols:
     st.error("예측 확률 컬럼을 찾을 수 없습니다. CSV 컬럼명을 확인하세요.")
-    st.dataframe(preds.head(3))
+    st.dataframe(preds_base.head(3))
     st.stop()
 
-# ── 사이드바 컨트롤 ───────────────────────────────────────────────
+# ── 모델 파일 감지 (API 연장 가능 여부) ──────────────────────────
+MODELS_DIR = Path(__file__).parents[1] / "models"
+_avail_models = {}
+for _stem in ["lgbm_v3a", "xgb_v3a"]:
+    _p = MODELS_DIR / f"{_stem}.pkl"
+    if _p.exists():
+        _avail_models[_stem] = _p
+CAN_EXTEND = (
+    len(_avail_models) > 0
+    and "kma" in st.secrets
+    and "api_key" in st.secrets.get("kma", {})
+)
+
+# ── 사이드바 Part 1: 지점·모델·옵션 선택 ─────────────────────────
 with st.sidebar:
     st.subheader("⚙️ 설정")
 
@@ -64,15 +78,11 @@ with st.sidebar:
 
     # 모델 선택
     def col_label(c):
-        # v2_baseline_LightGBM_proba → "v2 LightGBM"
-        # v3a_XGBoost_proba          → "v3a XGBoost"
         c_no = c.replace("_proba", "")
         if c_no.startswith("v2"):
-            model_part = c_no.split("_")[-1]
-            return f"v2  {model_part}"
+            return f"v2  {c_no.split('_')[-1]}"
         elif c_no.startswith("v3"):
-            model_part = c_no.split("_")[-1]
-            return f"v3a {model_part}"
+            return f"v3a {c_no.split('_')[-1]}"
         return c
 
     model_choice = st.radio(
@@ -83,7 +93,76 @@ with st.sidebar:
 
     st.divider()
 
-    # 날짜 범위
+    show_ma   = st.checkbox("7일 이동평균 표시",   value=True)
+    show_fire = st.checkbox("실제 산불 발생 표시", value=True)
+    show_avg  = st.checkbox("전국 평균 비교",       value=False)
+
+    # API 연장 옵션
+    if CAN_EXTEND:
+        st.divider()
+        _last = preds_base["date"].max().date()
+        extend_api = st.checkbox(
+            "📡 API 연장 예측 포함",
+            value=False,
+            help=f"{_last + timedelta(days=1)} 이후를 실시간 API로 예측해 이어붙입니다.",
+        )
+    else:
+        extend_api = False
+
+# ── API 연장 처리 (사이드바 밖에서 실행, 이후 날짜범위 위젯에 반영) ──
+preds      = preds_base.copy()
+ext_banner = None   # 연장 결과 안내 메시지 보관
+
+if extend_api and CAN_EXTEND:
+    last_date  = preds["date"].max()
+    since_date = last_date + timedelta(days=1)
+    cache_key  = f"ext_preds_{since_date.date()}"
+
+    if cache_key not in st.session_state:
+        with st.spinner(
+            f"API 연장 예측 중… "
+            f"({since_date.date()} ~ 어제, {len(_avail_models)}개 모델)"
+        ):
+            try:
+                from utils.api import run_extension_pipeline
+                _imsang = pd.read_csv(DATA_DIR / "asos_imsangdo_features.csv")
+                _dem    = pd.read_csv(DATA_DIR / "asos_dem_features.csv")
+                _key    = st.secrets["kma"]["api_key"]
+
+                ext_df, ext_failed = run_extension_pipeline(
+                    api_key=_key,
+                    station_ids=stations["station_id"].tolist(),
+                    imsang_df=_imsang,
+                    dem_df=_dem,
+                    model_paths=_avail_models,
+                    since_date=since_date,
+                )
+                st.session_state[cache_key] = ext_df
+                st.session_state[f"{cache_key}_failed"] = ext_failed
+            except Exception as _e:
+                st.error(f"연장 예측 오류: {_e}")
+                st.session_state[cache_key] = pd.DataFrame()
+
+    _ext = st.session_state.get(cache_key, pd.DataFrame())
+    if not _ext.empty:
+        preds = (
+            pd.concat([preds, _ext], ignore_index=True, sort=False)
+            .drop_duplicates(subset=["station_id", "date"])
+            .sort_values(["station_id", "date"])
+            .reset_index(drop=True)
+        )
+        # 연장된 proba 컬럼 반영
+        proba_cols = [c for c in preds.columns if "proba" in c.lower()]
+        _failed_n  = len(st.session_state.get(f"{cache_key}_failed", []))
+        ext_banner = (
+            f"📡 API 연장: {since_date.date()} ~ {_ext['date'].max().date()} "
+            f"({len(_ext['date'].unique())}일 추가"
+            + (f", 실패 {_failed_n}개 지점" if _failed_n else "") + ")"
+        )
+
+# ── 사이드바 Part 2: 날짜 범위 (연장된 preds 기준) ───────────────
+with st.sidebar:
+    st.divider()
     date_min = preds["date"].min().date()
     date_max = preds["date"].max().date()
     date_range = st.date_input(
@@ -93,11 +172,8 @@ with st.sidebar:
         max_value=date_max,
     )
 
-    st.divider()
-
-    show_ma = st.checkbox("7일 이동평균 표시", value=True)
-    show_fire = st.checkbox("실제 산불 발생 표시", value=True)
-    show_avg = st.checkbox("전국 평균 비교", value=False)
+if ext_banner:
+    st.info(ext_banner)
 
 # ── 데이터 필터 ───────────────────────────────────────────────────
 station_data = preds[preds["station_id"] == sel_id].copy()
@@ -158,10 +234,10 @@ fig = make_subplots(
     row_heights=[0.75, 0.25],
     shared_xaxes=True,
     vertical_spacing=0.06,
-    subplot_titles=("산불 위험도 발생 확률", "실제 산불 발생"),
+    subplot_titles=("산불 위험도 예측 확률", "실제 산불 발생"),
 )
 
-# 발생 확률 (연한 선)
+# 예측 확률 (연한 선)
 fig.add_trace(
     go.Scatter(
         x=station_data["date"],
