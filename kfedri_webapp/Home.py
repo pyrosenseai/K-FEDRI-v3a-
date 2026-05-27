@@ -8,6 +8,7 @@ from pathlib import Path
 from utils.style import apply_dark_theme
 from utils.api import (fetch_all_stations, build_weather_features,
                        build_v3a_features, predict_today, load_model, V3A_FEATURE_COLS)
+from utils.cache import load_today, save_today, cache_mtime
 
 st.set_page_config(
     page_title="K-FEDRI | 산불 위험도 예측",
@@ -236,23 +237,40 @@ elif not HAS_APIKEY:
         icon="🔑",
     )
 else:
+    # ── 오늘 캐시 자동 로드 ──────────────────────────────────────
+    _model_labels = list(AVAILABLE_MODELS.keys())
+    if "rt_all_results" not in st.session_state:
+        _cached = load_today(DATA_DIR, _model_labels)
+        if _cached:
+            st.session_state["rt_all_results"] = _cached
+            st.session_state["rt_failed"]      = []
+
     # ── 모델 선택 + 실행 버튼 ────────────────────────────────────
     ctrl_l, ctrl_r = st.columns([2, 1])
     with ctrl_l:
         if len(AVAILABLE_MODELS) > 1:
             rt_model_sel = st.radio(
                 "실시간 예측 모델",
-                list(AVAILABLE_MODELS.keys()),
+                _model_labels,
                 horizontal=True,
                 help="API 데이터는 한 번만 호출하고, 선택한 모델로 즉시 전환합니다.",
             )
         else:
-            rt_model_sel = list(AVAILABLE_MODELS.keys())[0]
+            rt_model_sel = _model_labels[0]
             st.caption(f"모델: `{rt_model_sel}`  |  API: 기상청 API허브 ASOS 일자료")
     with ctrl_r:
-        run_btn = st.button("🔄 오늘 전국 예측 실행", type="primary", use_container_width=True)
+        _has_cache = "rt_all_results" in st.session_state
+        _mtime     = cache_mtime(DATA_DIR, _model_labels) if _has_cache else ""
+        run_btn = st.button(
+            f"{'🔁 갱신' if _has_cache else '🔄 오늘 전국 예측 실행'}",
+            type="secondary" if _has_cache else "primary",
+            use_container_width=True,
+            help=f"오늘 {_mtime} 캐시된 결과를 사용 중입니다. 클릭하면 API를 다시 호출합니다." if _has_cache else None,
+        )
+    if _has_cache and _mtime:
+        st.caption(f"📦 오늘 {_mtime} 캐시된 결과 사용 중 — API 호출 없음")
 
-    # ── 실행 시: API 1회 호출 → 모든 모델 예측 ──────────────────
+    # ── 실행 시: API 1회 호출 → 모든 모델 예측 → 캐시 저장 ──────
     if run_btn:
         try:
             imsang_df = pd.read_csv(DATA_DIR / "asos_imsangdo_features.csv")
@@ -266,15 +284,13 @@ else:
                 progress_bar.progress(done / total,
                     text=f"API 호출 중… {done}/{total} 지점")
 
-            with st.spinner(f"기상청 API 수집 → {len(AVAILABLE_MODELS)}개 모델 예측 중 (약 20초)"):
-                # ① 기상 데이터 수집 (한 번만)
+            with st.spinner(f"기상청 API 수집 → {len(AVAILABLE_MODELS)}개 모델 예측 중 (약 10초)"):
                 raw_df, failed = fetch_all_stations(
                     stn_ids, api_key, progress_callback=on_progress,
                 )
                 weather_df  = build_weather_features(raw_df)
                 features_df = build_v3a_features(weather_df, imsang_df, dem_df)
 
-                # ② 모든 가용 모델로 예측
                 all_results = {}
                 for mname, mpath in AVAILABLE_MODELS.items():
                     mdl = load_model(mpath)
@@ -282,8 +298,10 @@ else:
                     all_results[mname] = res
 
             progress_bar.empty()
+            save_today(DATA_DIR, all_results)          # 캐시 저장
             st.session_state["rt_all_results"] = all_results
             st.session_state["rt_failed"]      = failed
+            st.rerun()
 
         except Exception as e:
             st.error(f"예측 실행 중 오류: {e}")
