@@ -118,6 +118,10 @@ if station_data.empty:
 # 이동평균
 station_data["ma7"] = station_data[model_choice].rolling(7, center=True).mean()
 
+# % 단위 컬럼 (차트 표시용)
+station_data["proba_pct"] = station_data[model_choice] * 100
+station_data["ma7_pct"]   = station_data["ma7"] * 100
+
 # 실제 산불
 fires = station_data[station_data["Y_ignition"] == 1]
 
@@ -131,6 +135,7 @@ if show_avg:
         .rename(columns={model_choice: "national_avg"})
         .sort_values("date")
     )
+    avg_data["national_avg_pct"] = avg_data["national_avg"] * 100
 
 # ── 요약 지표 ─────────────────────────────────────────────────────
 stn_info = stations[stations["station_id"] == sel_id].iloc[0]
@@ -160,9 +165,9 @@ fig = make_subplots(
 fig.add_trace(
     go.Scatter(
         x=station_data["date"],
-        y=station_data[model_choice],
+        y=station_data["proba_pct"],
         mode="lines",
-        name="예측 확률",
+        name="발생 확률",
         line=dict(color="#fca5a5", width=1),
         opacity=0.6,
     ),
@@ -174,7 +179,7 @@ if show_ma:
     fig.add_trace(
         go.Scatter(
             x=station_data["date"],
-            y=station_data["ma7"],
+            y=station_data["ma7_pct"],
             mode="lines",
             name="7일 이동평균",
             line=dict(color="#ef4444", width=2.5),
@@ -184,11 +189,11 @@ if show_ma:
 
 # 전국 평균
 if show_avg and len(avg_data) > 0:
-    avg_data["ma7_avg"] = avg_data["national_avg"].rolling(7, center=True).mean()
+    avg_data["ma7_avg_pct"] = avg_data["national_avg_pct"].rolling(7, center=True).mean()
     fig.add_trace(
         go.Scatter(
             x=avg_data["date"],
-            y=avg_data["ma7_avg"],
+            y=avg_data["ma7_avg_pct"],
             mode="lines",
             name="전국 평균 (7일MA)",
             line=dict(color="#94a3b8", width=1.5, dash="dot"),
@@ -196,20 +201,12 @@ if show_avg and len(avg_data) > 0:
         row=1, col=1,
     )
 
-# 위험 임계선 (0.5)
-fig.add_hline(
-    y=0.5, row=1, col=1,
-    line=dict(color="#f97316", width=1, dash="dash"),
-    annotation_text="임계값 0.5",
-    annotation_position="right",
-)
-
 # 산불 발생 마커 (상단 차트)
 if show_fire and len(fires) > 0:
     fig.add_trace(
         go.Scatter(
             x=fires["date"],
-            y=fires[model_choice],
+            y=fires["proba_pct"],
             mode="markers",
             name="실제 산불 발생",
             marker=dict(color="#7f1d1d", size=10, symbol="x", line=dict(width=2)),
@@ -236,7 +233,7 @@ fig.update_layout(
     margin=dict(t=60, b=20, l=60, r=80),
     plot_bgcolor= "#0F172A",
 )
-fig.update_yaxes(title_text="예측 확률", range=[0, 1], row=1, col=1)
+fig.update_yaxes(title_text="발생 확률 (%)", range=[0, 100], row=1, col=1)
 fig.update_yaxes(title_text="산불", tickvals=[0, 1], row=2, col=1)
 fig.update_xaxes(title_text="날짜", row=2, col=1)
 
@@ -253,7 +250,7 @@ heatmap_df = (
     .mean()
     .unstack("month")
     .fillna(0)
-)
+) * 100   # % 단위 변환
 
 month_labels = ["1월", "2월", "3월", "4월", "5월", "6월",
                 "7월", "8월", "9월", "10월", "11월", "12월"]
@@ -262,6 +259,7 @@ fig_hm = go.Figure(go.Heatmap(
     z=heatmap_df.values,
     x=[month_labels[m - 1] for m in heatmap_df.columns],
     y=[str(y) for y in heatmap_df.index],
+    zmin=0, zmax=100,
     colorscale=[
         [0.0,  "#f0fdf4"],
         [0.25, "#86efac"],
@@ -269,10 +267,10 @@ fig_hm = go.Figure(go.Heatmap(
         [0.75, "#f97316"],
         [1.0,  "#7f1d1d"],
     ],
-    text=[[f"{v:.3f}" for v in row] for row in heatmap_df.values],
+    text=[[f"{v:.1f}%" for v in row] for row in heatmap_df.values],
     texttemplate="%{text}",
-    hovertemplate="<b>%{y}년 %{x}</b><br>평균 위험도: %{z:.3f}<extra></extra>",
-    colorbar=dict(title="위험도"),
+    hovertemplate="<b>%{y}년 %{x}</b><br>평균 발생 확률: %{z:.1f}%<extra></extra>",
+    colorbar=dict(title="발생 확률 (%)"),
 ))
 fig_hm.update_layout(height=200, margin=dict(t=10, b=10, l=60, r=80))
 st.plotly_chart(fig_hm, use_container_width=True)
@@ -281,11 +279,11 @@ st.plotly_chart(fig_hm, use_container_width=True)
 if len(fires) > 0:
     st.subheader(f"🔥 실제 산불 발생일 상세 ({len(fires)}건)")
     fire_tbl = fires[["date", model_choice]].copy()
-    fire_tbl.columns = ["발생일", "예측 확률"]
+    fire_tbl.columns = ["발생일", "발생 확률 (%)"]
     fire_tbl["발생일"] = fire_tbl["발생일"].dt.strftime("%Y-%m-%d")
-    fire_tbl["예측 확률"] = fire_tbl["예측 확률"].round(4)
-    fire_tbl["탐지 여부"] = fire_tbl["예측 확률"].apply(
-        lambda v: "✅ 탐지 (≥0.5)" if v >= 0.5 else "❌ 미탐지 (<0.5)"
+    fire_tbl["발생 확률 (%)"] = (fire_tbl["발생 확률 (%)"] * 100).round(1)
+    fire_tbl["탐지 여부"] = fire_tbl["발생 확률 (%)"].apply(
+        lambda v: "✅ 탐지 (≥50%)" if v >= 50 else "❌ 미탐지 (<50%)"
     )
     st.dataframe(fire_tbl, use_container_width=True, hide_index=True)
 else:
