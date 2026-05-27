@@ -343,100 +343,56 @@ else:
         st.subheader("🗺️ 실시간 위험도 지도")
         st.caption("위험 지점일수록 크고 선명하게, 안전 지점은 투명하게 표시됩니다.")
 
-        map_df = result_df.merge(
-            stations[["station_id", "lat", "lon"]],
-            on="station_id", how="left",
-        )
-
         def _risk_style(p):
-            if p >= 0.70:
-                return "#ef4444", 14, 0.90
-            elif p >= 0.50:
-                return "#f97316", 11, 0.75
-            elif p >= 0.25:
-                return "#eab308",  8, 0.40
-            else:
-                return "#22c55e",  5, 0.15
+            if p >= 0.70:   return "#ef4444", 14, 0.90
+            elif p >= 0.50: return "#f97316", 11, 0.75
+            elif p >= 0.25: return "#eab308",  8, 0.40
+            else:           return "#22c55e",  5, 0.15
 
-        m = folium.Map(location=[36.5, 127.8], zoom_start=7,
-                       tiles="CartoDB dark_matter")
+        def _build_map(res_df, label):
+            mdf = res_df.merge(stations[["station_id", "lat", "lon"]],
+                               on="station_id", how="left")
+            fm = folium.Map(location=[36.5, 127.8], zoom_start=6,
+                            tiles="CartoDB dark_matter")
+            for _, row in mdf.iterrows():
+                if pd.isna(row.get("lat")) or pd.isna(row.get("lon")):
+                    continue
+                p = row["proba"]
+                color, radius, opacity = _risk_style(p)
+                folium.CircleMarker(
+                    location=[row["lat"], row["lon"]],
+                    radius=radius,
+                    color=color, fill=True, fill_color=color,
+                    fill_opacity=opacity,
+                    weight=1.5 if p >= 0.50 else 0.5,
+                    tooltip=f"{row['station_name']} | {p*100:.1f}%",
+                    popup=folium.Popup(
+                        f"<b>{row['station_name']}</b> ({row['region']})<br>"
+                        f"발생 확률: <b style='color:{color}'>{p*100:.1f}%</b>",
+                        max_width=200,
+                    ),
+                ).add_to(fm)
+            return fm
 
-        for _, row in map_df.iterrows():
-            if pd.isna(row.get("lat")) or pd.isna(row.get("lon")):
-                continue
-            p = row["proba"]
-            color, radius, opacity = _risk_style(p)
-            folium.CircleMarker(
-                location=[row["lat"], row["lon"]],
-                radius=radius,
-                color=color,
-                fill=True,
-                fill_color=color,
-                fill_opacity=opacity,
-                weight=1.5 if p >= 0.50 else 0.5,
-                tooltip=f"{row['station_name']} | {p*100:.1f}%",
-                popup=folium.Popup(
-                    f"<b>{row['station_name']}</b> ({row['region']})<br>"
-                    f"발생 확률: <b style='color:{color}'>{p*100:.1f}%</b>",
-                    max_width=200,
-                ),
-            ).add_to(m)
-
-        st_folium(m, height=500, use_container_width=True)
-
-        # ── 상위 지점 + 지역별 차트 ──────────────────────────────
-        st.divider()
-        rt1, rt2 = st.columns([3, 2])
-
-        with rt1:
-            st.subheader(f"⚠️ 고위험 지점 Top 15 ({_cur})")
-            tbl = (
-                result_df[["station_name", "region", "proba"]]
-                .sort_values("proba", ascending=False)
-                .head(15)
-                .rename(columns={"station_name": "지점명",
-                                 "region":       "지역",
-                                 "proba":        "발생 확률"})
+        model_names = list(all_results.keys())
+        if len(model_names) >= 2:
+            mc1, mc2 = st.columns(2)
+            for col, mname in zip([mc1, mc2], model_names[:2]):
+                res = all_results[mname].merge(
+                    stations[["station_id", "station_name", "region"]],
+                    on="station_id", how="left",
+                )
+                with col:
+                    st.caption(f"**{mname}**")
+                    st_folium(_build_map(res, mname), height=420,
+                              use_container_width=True, key=f"rt_map_{mname}")
+        else:
+            res = all_results[model_names[0]].merge(
+                stations[["station_id", "station_name", "region"]],
+                on="station_id", how="left",
             )
-            tbl["발생 확률"] = (tbl["발생 확률"] * 100).round(1)
-
-            def highlight_prob(s):
-                return [
-                    "color:#ef4444; font-weight:bold" if v >= 70
-                    else "color:#f97316; font-weight:bold" if v >= 50
-                    else "" for v in s
-                ]
-
-            st.dataframe(
-                tbl.style.apply(highlight_prob, subset=["발생 확률"]),
-                use_container_width=True, hide_index=True,
-            )
-
-        with rt2:
-            st.subheader("📊 지역별 평균 발생 확률")
-            reg_avg = (
-                result_df.groupby("region")["proba"]
-                .mean().reset_index()
-                .rename(columns={"region": "지역", "proba": "평균 확률"})
-                .sort_values("평균 확률", ascending=True)
-            )
-            reg_avg["평균 확률"] = reg_avg["평균 확률"] * 100
-            fig_rt = px.bar(
-                reg_avg, x="평균 확률", y="지역",
-                orientation="h", color="평균 확률",
-                color_continuous_scale=["#22c55e", "#eab308", "#f97316", "#ef4444"],
-                range_color=[0, 100], text="평균 확률",
-            )
-            fig_rt.update_traces(texttemplate="%{text:.1f}%", textposition="outside")
-            fig_rt.update_layout(
-                height=400, coloraxis_showscale=False,
-                margin=dict(t=10, b=10, r=60),
-                xaxis=dict(
-                    title="발생 확률 (%)",
-                    range=[0, max(reg_avg["평균 확률"].max() * 1.2, 5)],
-                ),
-            )
-            st.plotly_chart(fig_rt, use_container_width=True)
+            st_folium(_build_map(res, model_names[0]), height=460,
+                      use_container_width=True, key="rt_map_single")
 
 st.divider()
 
