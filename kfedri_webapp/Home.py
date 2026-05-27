@@ -133,11 +133,11 @@ if has_preds and proba_cols:
             .rename(columns={
                 "station_name": "지점명",
                 "region":       "지역",
-                model_choice:   "예측 확률",
+                model_choice:   "발생 확률",
                 "Y_ignition":   "실제 산불",
             })
         )
-        top_tbl["예측 확률"] = (top_tbl["예측 확률"] * 100).round(1)
+        top_tbl["발생 확률"] = (top_tbl["발생 확률"] * 100).round(1)
         top_tbl["실제 산불"] = top_tbl["실제 산불"].apply(
             lambda v: "🔥" if v == 1 else ""
         )
@@ -154,13 +154,13 @@ if has_preds and proba_cols:
             return styles
 
         st.dataframe(
-            top_tbl.style.apply(highlight_prob, subset=["예측 확률"]),
+            top_tbl.style.apply(highlight_prob, subset=["발생 확률"]),
             use_container_width=True,
             hide_index=True,
         )
 
     with col_r:
-        st.subheader("🗺️ 지역별 평균 예측 확률")
+        st.subheader("🗺️ 지역별 평균 발생 확률")
         region_avg = (
             day_df.groupby("region")[model_choice]
             .mean()
@@ -335,20 +335,20 @@ else:
         rt1, rt2 = st.columns([3, 2])
 
         with rt1:
-            st.subheader(f"📋 예측 확률 상위 지점 ({_cur})")
+            st.subheader(f"📋 발생 확률 상위 지점 ({_cur})")
             tbl = (
                 result_df[["station_name", "region", "proba"]]
                 .sort_values("proba", ascending=False)
                 .head(15)
                 .rename(columns={"station_name": "지점명",
                                  "region":       "지역",
-                                 "proba":        "예측 확률"})
+                                 "proba":        "발생 확률"})
             )
-            tbl["예측 확률"] = (tbl["예측 확률"] * 100).round(1)
+            tbl["발생 확률"] = (tbl["발생 확률"] * 100).round(1)
             st.dataframe(tbl, use_container_width=True, hide_index=True)
 
         with rt2:
-            st.subheader("🗺️ 지역별 평균 예측 확률")
+            st.subheader("🗺️ 지역별 평균 발생 확률")
             reg_avg = (
                 result_df.groupby("region")["proba"]
                 .mean().reset_index()
