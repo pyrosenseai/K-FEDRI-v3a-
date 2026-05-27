@@ -19,7 +19,7 @@ PRED_PATH = DATA_DIR / "v3_predictions.csv"
 if not PRED_PATH.exists():
     st.warning(
         "**v3_predictions.csv** 파일이 없습니다.\n\n"
-        "팀원에게 `step6.py` 실행 후 아래 파일을 `data/` 폴더에 추가해달라고 요청하세요.\n\n"
+        "`step6.py` 실행 후 아래 파일을 `data/` 폴더에 추가하세요.\n\n"
         "```\nD:\\K_FEDRI_v3\\v3_predictions.csv\n```"
     )
     st.stop()
@@ -210,6 +210,9 @@ if show_avg:
 
 # ── 요약 지표 ─────────────────────────────────────────────────────
 stn_info = stations[stations["station_id"] == sel_id].iloc[0]
+_det_cnt = int((fires[model_choice] >= 0.5).sum()) if len(fires) > 0 else 0
+_det_rate = f"{_det_cnt}/{len(fires)}건 ({_det_cnt/len(fires)*100:.0f}%)" if len(fires) > 0 else "해당없음"
+
 c1, c2, c3, c4 = st.columns(4)
 with c1:
     st.metric("지점", stn_info["station_name"])
@@ -218,91 +221,132 @@ with c2:
 with c3:
     st.metric("실제 산불 발생", f"{len(fires)}건")
 with c4:
-    peak_date = station_data.loc[station_data[model_choice].idxmax(), "date"]
-    st.metric("최고 위험일", peak_date.strftime("%Y-%m-%d"))
+    st.metric("탐지율 (≥50%)", _det_rate,
+              help="실제 산불 발생일 중 모델이 50% 이상을 예측한 비율입니다.")
 
 st.divider()
 
-# ── 메인 시계열 차트 ──────────────────────────────────────────────
-fig = make_subplots(
-    rows=2, cols=1,
-    row_heights=[0.75, 0.25],
-    shared_xaxes=True,
-    vertical_spacing=0.06,
-    subplot_titles=("발생 확률 추이", "실제 산불 발생"),
-)
+# ── 산불 발생 전 발생 확률 추이 (메인 차트) ───────────────────────
+st.subheader("🔥 산불 발생 전 발생 확률 추이")
 
-# 예측 확률 (연한 선)
-fig.add_trace(
-    go.Scatter(
-        x=station_data["date"],
-        y=station_data["proba_pct"],
-        mode="lines",
-        name="발생 확률",
-        line=dict(color="#ef4444", width=1.5),
-    ),
-    row=1, col=1,
-)
-
-# 전국 평균
-if show_avg and len(avg_data) > 0:
-    fig.add_trace(
-        go.Scatter(
-            x=avg_data["date"],
-            y=avg_data["national_avg_pct"],
-            mode="lines",
-            name="전국 평균",
-            line=dict(color="#94a3b8", width=1.5, dash="dot"),
-        ),
-        row=1, col=1,
+if len(fires) == 0:
+    st.info(
+        "해당 기간에 이 지점의 실제 산불 발생 기록이 없습니다.\n\n"
+        "산불 발생 이력이 있는 지점을 선택하면 발생 전 확률 추이를 분석합니다."
     )
+else:
+    N = st.slider("발생 전 분석 기간 (일)", min_value=3, max_value=14, value=7, step=1,
+                  help="산불 발생일 기준 며칠 전까지 확률을 추적할지 설정합니다.")
 
-# 산불 발생 마커 (상단 차트)
-if show_fire and len(fires) > 0:
-    fig.add_trace(
-        go.Scatter(
-            x=fires["date"],
-            y=fires["proba_pct"],
-            mode="markers",
-            name="실제 산불 발생",
-            marker=dict(color="#7f1d1d", size=10, symbol="x", line=dict(width=2)),
-        ),
-        row=1, col=1,
-    )
+    # 날짜 필터 없이 해당 지점 전체 데이터 사용 (pre-fire 윈도우가 필터 범위 밖일 수 있음)
+    all_stn = preds[preds["station_id"] == sel_id].sort_values("date").copy()
+    all_stn["proba_pct"] = all_stn[model_choice] * 100
 
-# 하단: 산불 발생 막대
-fig.add_trace(
-    go.Bar(
-        x=station_data["date"],
-        y=station_data["Y_ignition"],
-        name="산불 발생 (0/1)",
-        marker_color="#7f1d1d",
-        showlegend=False,
-    ),
-    row=2, col=1,
-)
+    trajectories = []
+    for i, fd in enumerate(fires["date"]):
+        window = all_stn[
+            (all_stn["date"] >= fd - pd.Timedelta(days=N)) &
+            (all_stn["date"] <= fd)
+        ].copy()
+        if window.empty:
+            continue
+        window["days_before"] = (window["date"] - fd).dt.days
+        window["fire_idx"]    = i
+        trajectories.append(window[["days_before", "proba_pct", "fire_idx"]])
 
-fig.update_layout(
-    height=520,
-    hovermode="x unified",
-    legend=dict(orientation="h", y=1.05, x=0),
-    margin=dict(t=60, b=20, l=60, r=80),
-    plot_bgcolor= "#0F172A",
-)
-fig.update_yaxes(title_text="발생 확률 (%)", range=[0, 100], row=1, col=1)
-fig.update_yaxes(title_text="산불", tickvals=[0, 1], row=2, col=1)
-fig.update_xaxes(title_text="날짜", row=2, col=1)
+    if not trajectories:
+        st.warning("선택한 날짜 범위 내에 분석 가능한 산불 사건이 없습니다.")
+    else:
+        traj_df  = pd.concat(trajectories, ignore_index=True)
+        avg_traj = (
+            traj_df.groupby("days_before")["proba_pct"]
+            .mean().reset_index()
+            .sort_values("days_before")
+        )
 
-st.plotly_chart(fig, use_container_width=True)
+        # X축 레이블: D-7, D-6 … 발생일
+        avg_traj["label"] = avg_traj["days_before"].apply(
+            lambda d: "발생일" if d == 0 else f"D{d}"
+        )
+
+        def bar_color(p):
+            if p >= 70: return "#ef4444"
+            if p >= 50: return "#f97316"
+            if p >= 25: return "#eab308"
+            return "#22c55e"
+
+        fig_pre = go.Figure()
+
+        # 개별 이벤트 선 (2건 이상일 때만)
+        if len(fires) > 1:
+            for i, grp in traj_df.groupby("fire_idx"):
+                grp = grp.sort_values("days_before")
+                fig_pre.add_trace(go.Scatter(
+                    x=grp["days_before"],
+                    y=grp["proba_pct"],
+                    mode="lines",
+                    line=dict(color="#fca5a5", width=1),
+                    opacity=0.35,
+                    showlegend=(i == 0),
+                    name="개별 산불 사건",
+                ))
+
+        # 평균 막대
+        fig_pre.add_trace(go.Bar(
+            x=avg_traj["days_before"],
+            y=avg_traj["proba_pct"],
+            name="평균 발생 확률",
+            marker_color=[bar_color(p) for p in avg_traj["proba_pct"]],
+            text=[f"{p:.1f}%" for p in avg_traj["proba_pct"]],
+            textposition="outside",
+        ))
+
+        # 50% 탐지 기준선
+        fig_pre.add_hline(
+            y=50, line_dash="dash", line_color="#94a3b8",
+            annotation_text="탐지 기준 (50%)",
+            annotation_position="top right",
+        )
+
+        y_max = max(avg_traj["proba_pct"].max() * 1.25, 60)
+        fig_pre.update_layout(
+            height=380,
+            xaxis=dict(
+                title="발생 전 일수",
+                tickmode="array",
+                tickvals=avg_traj["days_before"].tolist(),
+                ticktext=avg_traj["label"].tolist(),
+            ),
+            yaxis=dict(title="발생 확률 (%)", range=[0, y_max]),
+            legend=dict(orientation="h", y=1.08),
+            margin=dict(t=40, b=40, l=60, r=80),
+            bargap=0.25,
+        )
+        st.plotly_chart(fig_pre, use_container_width=True)
+
+        # 인사이트 한 줄 요약
+        d0   = avg_traj[avg_traj["days_before"] == 0]["proba_pct"]
+        d_n  = avg_traj[avg_traj["days_before"] == avg_traj["days_before"].min()]["proba_pct"]
+        det  = int((fires[model_choice] >= 0.5).sum())
+        if len(d0) and len(d_n):
+            rise = float(d0.iloc[0]) - float(d_n.iloc[0])
+            st.caption(
+                f"발생일 평균 확률 **{d0.iloc[0]:.1f}%** &nbsp;|&nbsp; "
+                f"{N}일 전 대비 **{rise:+.1f}%p** &nbsp;|&nbsp; "
+                f"탐지율(≥50%) **{det}/{len(fires)}건 "
+                f"({det/len(fires)*100:.0f}%)**"
+            )
 
 with st.expander("⚠️ 발생 확률 수치 해석 주의"):
     st.caption(
         "표시된 발생 확률은 모델 점수(predict_proba)를 백분율로 변환한 값입니다. "
         "class_weight / scale_pos_weight 적용으로 수치 자체를 실제 발생확률로 해석하기 어렵습니다. "
-        "지점 간 상대적 위험 순위 비교 또는 시계열 위험 추이 파악에 활용하세요."
+        "지점 간 상대적 위험 순위 비교 또는 탐지 능력 평가에 활용하세요."
     )
 
-# ── 월별 위험도 히트맵 ────────────────────────────────────────────
+st.divider()
+
+# ── 월별 평균 발생 확률 히트맵 ────────────────────────────────────
 st.subheader("📅 월별 평균 발생 확률")
 
 station_data["year"]  = station_data["date"].dt.year
@@ -310,13 +354,11 @@ station_data["month"] = station_data["date"].dt.month
 
 heatmap_df = (
     station_data.groupby(["year", "month"])[model_choice]
-    .mean()
-    .unstack("month")
-    .fillna(0)
-) * 100   # % 단위 변환
+    .mean().unstack("month").fillna(0)
+) * 100
 
-month_labels = ["1월", "2월", "3월", "4월", "5월", "6월",
-                "7월", "8월", "9월", "10월", "11월", "12월"]
+month_labels = ["1월","2월","3월","4월","5월","6월",
+                "7월","8월","9월","10월","11월","12월"]
 
 fig_hm = go.Figure(go.Heatmap(
     z=heatmap_df.values,
@@ -324,11 +366,8 @@ fig_hm = go.Figure(go.Heatmap(
     y=[str(y) for y in heatmap_df.index],
     zmin=0, zmax=100,
     colorscale=[
-        [0.0,  "#f0fdf4"],
-        [0.25, "#86efac"],
-        [0.5,  "#fde68a"],
-        [0.75, "#f97316"],
-        [1.0,  "#7f1d1d"],
+        [0.0, "#f0fdf4"], [0.25, "#86efac"],
+        [0.5, "#fde68a"], [0.75, "#f97316"], [1.0, "#7f1d1d"],
     ],
     text=[[f"{v:.1f}%" for v in row] for row in heatmap_df.values],
     texttemplate="%{text}",
@@ -342,12 +381,10 @@ st.plotly_chart(fig_hm, use_container_width=True)
 if len(fires) > 0:
     st.subheader(f"🔥 실제 산불 발생일 상세 ({len(fires)}건)")
     fire_tbl = fires[["date", model_choice]].copy()
-    fire_tbl.columns = ["발생일", "발생 확률 (%)"]
-    fire_tbl["발생일"] = fire_tbl["발생일"].dt.strftime("%Y-%m-%d")
-    fire_tbl["발생 확률 (%)"] = (fire_tbl["발생 확률 (%)"] * 100).round(1)
-    fire_tbl["탐지 여부"] = fire_tbl["발생 확률 (%)"].apply(
+    fire_tbl.columns = ["발생일", "발생 확률"]
+    fire_tbl["발생일"]    = fire_tbl["발생일"].dt.strftime("%Y-%m-%d")
+    fire_tbl["발생 확률"] = (fire_tbl["발생 확률"] * 100).round(1)
+    fire_tbl["탐지 여부"] = fire_tbl["발생 확률"].apply(
         lambda v: "✅ 탐지 (≥50%)" if v >= 50 else "❌ 미탐지 (<50%)"
     )
     st.dataframe(fire_tbl, use_container_width=True, hide_index=True)
-else:
-    st.info("해당 기간 내 이 지점의 실제 산불 발생 기록이 없습니다.")
