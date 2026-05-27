@@ -6,7 +6,7 @@ from pathlib import Path
 from utils.style import apply_dark_theme
 from utils.api import (fetch_all_stations, build_weather_features,
                        build_v3a_features, predict_today, load_model, V3A_FEATURE_COLS)
-from utils.cache import load_today, save_today, cache_mtime
+from utils.cache import load_today, save_today, cache_mtime, save_weather, load_weather
 
 st.set_page_config(
     page_title="K-FEDRI | 산불 위험도 예측",
@@ -38,6 +38,12 @@ def load_stations():
 @st.cache_data
 def load_preds():
     return pd.read_csv(PRED_PATH, parse_dates=["date"])
+
+
+@st.cache_resource
+def _get_model(model_path_str: str):
+    """pkl 모델을 서버 세션 내 한 번만 로드 (재클릭 시 재사용)."""
+    return load_model(Path(model_path_str))
 
 
 stations = load_stations()
@@ -268,7 +274,7 @@ else:
     if _has_cache and _mtime:
         st.caption(f"📦 오늘 {_mtime} 캐시된 결과 사용 중 — API 호출 없음")
 
-    # ── 실행 시: API 1회 호출 → 모든 모델 예측 → 캐시 저장 ──────
+    # ── 실행 시: 기상 캐시 확인 → 없으면 API 1회 호출 → 예측 → 저장 ──
     if run_btn:
         try:
             imsang_df = pd.read_csv(DATA_DIR / "asos_imsangdo_features.csv")
@@ -276,29 +282,42 @@ else:
             api_key   = st.secrets["kma"]["api_key"]
             stn_ids   = stations["station_id"].tolist()
 
-            progress_bar = st.progress(0, text="API 호출 중…")
+            # ── 오늘 기상 데이터 캐시 확인 ───────────────────────────
+            raw_df = load_weather(DATA_DIR)
+            failed = []
 
-            def on_progress(done, total):
-                if done == 0:
-                    progress_bar.progress(0.05, text="API 호출 중… 전국 97개 지점 일괄 요청")
-                else:
-                    progress_bar.progress(1.0, text="API 응답 수신 완료 — 피처 계산 및 예측 중…")
+            if raw_df is None:
+                # 캐시 없음 → API 호출
+                progress_bar = st.progress(0, text="API 호출 중…")
 
-            with st.spinner(f"기상청 API 수집 → {len(AVAILABLE_MODELS)}개 모델 예측 중 (약 5~10초)"):
-                raw_df, failed = fetch_all_stations(
-                    stn_ids, api_key, progress_callback=on_progress,
-                )
+                def on_progress(done, total):
+                    if done == 0:
+                        progress_bar.progress(0.05, text="API 호출 중… 전국 97개 지점 일괄 요청")
+                    else:
+                        progress_bar.progress(1.0, text="API 응답 수신 완료 — 피처 계산 및 예측 중…")
+
+                with st.spinner("기상청 API 수집 중 (약 5~10초)…"):
+                    raw_df, failed = fetch_all_stations(
+                        stn_ids, api_key, progress_callback=on_progress,
+                    )
+                progress_bar.empty()
+                save_weather(DATA_DIR, raw_df)   # 기상 데이터 캐시 저장
+            else:
+                # 오늘 기상 캐시 존재 → API 스킵
+                st.toast("📦 오늘 기상 데이터 캐시 사용 — API 호출 없음", icon="⚡")
+
+            # ── 피처 계산 + 모델 예측 ──────────────────────────────
+            with st.spinner(f"{len(AVAILABLE_MODELS)}개 모델 예측 계산 중…"):
                 weather_df  = build_weather_features(raw_df)
                 features_df = build_v3a_features(weather_df, imsang_df, dem_df)
 
                 all_results = {}
                 for mname, mpath in AVAILABLE_MODELS.items():
-                    mdl = load_model(mpath)
+                    mdl = _get_model(str(mpath))   # 세션 내 캐시된 모델 재사용
                     res = predict_today(features_df, mdl)
                     all_results[mname] = res
 
-            progress_bar.empty()
-            save_today(DATA_DIR, all_results)          # 캐시 저장
+            save_today(DATA_DIR, all_results)          # 예측 캐시 저장
             st.session_state["rt_all_results"] = all_results
             st.session_state["rt_failed"]      = failed
             st.rerun()
