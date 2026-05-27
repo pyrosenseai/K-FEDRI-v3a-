@@ -1,6 +1,9 @@
 # 비밀키 - 절대 커밋 금지
 .streamlit/secrets.toml
 
+# 실시간 예측 일별 캐시
+data/rt_cache/
+
 # Python
 __pycache__/
 *.pyc
