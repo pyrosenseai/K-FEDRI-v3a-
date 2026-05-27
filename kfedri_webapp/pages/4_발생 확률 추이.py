@@ -93,8 +93,7 @@ with st.sidebar:
 
     st.divider()
 
-    show_fire = st.checkbox("실제 산불 발생 표시", value=True)
-    show_avg  = st.checkbox("전국 평균 비교",       value=False)
+    show_avg  = st.checkbox("전국 평균 비교", value=False)
 
     # API 연장 옵션
     if CAN_EXTEND:
@@ -193,8 +192,15 @@ if station_data.empty:
 # % 단위 컬럼 (차트 표시용)
 station_data["proba_pct"] = station_data[model_choice] * 100
 
-# 실제 산불
-fires = station_data[station_data["Y_ignition"] == 1]
+# 실제 산불 — 날짜 필터와 무관하게 해당 지점 전체 기록 사용
+# (날짜 범위 밖 사건도 발생 전 확률 추이 분석에 포함)
+all_stn = preds[preds["station_id"] == sel_id].sort_values("date").copy()
+all_stn["proba_pct"] = all_stn[model_choice] * 100
+
+if "Y_ignition" in all_stn.columns:
+    fires = all_stn[all_stn["Y_ignition"] == 1].copy()
+else:
+    fires = pd.DataFrame()
 
 # 전국 평균
 if show_avg:
@@ -230,17 +236,16 @@ st.divider()
 st.subheader("🔥 산불 발생 전 발생 확률 추이")
 
 if len(fires) == 0:
-    st.info(
-        "해당 기간에 이 지점의 실제 산불 발생 기록이 없습니다.\n\n"
-        "산불 발생 이력이 있는 지점을 선택하면 발생 전 확률 추이를 분석합니다."
-    )
+    if "Y_ignition" not in preds.columns:
+        st.warning("예측 데이터에 `Y_ignition` 컬럼이 없습니다. 산불 발생 이력을 분석할 수 없습니다.")
+    else:
+        st.info(
+            f"**{stn_info['station_name']}** 지점은 전체 데이터 기간 동안 산불 발생 기록이 없습니다.\n\n"
+            "좌측 사이드바에서 다른 지점을 선택해보세요."
+        )
 else:
     N = st.slider("발생 전 분석 기간 (일)", min_value=3, max_value=14, value=7, step=1,
                   help="산불 발생일 기준 며칠 전까지 확률을 추적할지 설정합니다.")
-
-    # 날짜 필터 없이 해당 지점 전체 데이터 사용 (pre-fire 윈도우가 필터 범위 밖일 수 있음)
-    all_stn = preds[preds["station_id"] == sel_id].sort_values("date").copy()
-    all_stn["proba_pct"] = all_stn[model_choice] * 100
 
     trajectories = []
     for i, fd in enumerate(fires["date"]):
