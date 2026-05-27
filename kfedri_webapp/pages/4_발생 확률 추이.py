@@ -7,9 +7,9 @@ from pathlib import Path
 from datetime import timedelta
 from utils.style import apply_dark_theme, PLOTLY_BG, PLOTLY_PAPER_BG
 
-st.set_page_config(page_title="예측 확률 추이", page_icon="📈", layout="wide")
+st.set_page_config(page_title="발생 확률 추이", page_icon="📈", layout="wide")
 apply_dark_theme()
-st.title("📈 지점별 산불 위험도 추이")
+st.title("📈 지점별 발생 확률 추이")
 
 DATA_DIR = Path(__file__).parents[1] / "data"
 PRED_PATH = DATA_DIR / "v3_predictions.csv"
@@ -93,7 +93,6 @@ with st.sidebar:
 
     st.divider()
 
-    show_ma   = st.checkbox("7일 이동평균 표시",   value=True)
     show_fire = st.checkbox("실제 산불 발생 표시", value=True)
     show_avg  = st.checkbox("전국 평균 비교",       value=False)
 
@@ -191,12 +190,8 @@ if station_data.empty:
     st.warning("해당 지점·기간 데이터가 없습니다.")
     st.stop()
 
-# 이동평균
-station_data["ma7"] = station_data[model_choice].rolling(7, center=True).mean()
-
 # % 단위 컬럼 (차트 표시용)
 station_data["proba_pct"] = station_data[model_choice] * 100
-station_data["ma7_pct"]   = station_data["ma7"] * 100
 
 # 실제 산불
 fires = station_data[station_data["Y_ignition"] == 1]
@@ -234,7 +229,7 @@ fig = make_subplots(
     row_heights=[0.75, 0.25],
     shared_xaxes=True,
     vertical_spacing=0.06,
-    subplot_titles=("산불 위험도 예측 확률", "실제 산불 발생"),
+    subplot_titles=("발생 확률 추이", "실제 산불 발생"),
 )
 
 # 예측 확률 (연한 선)
@@ -244,34 +239,19 @@ fig.add_trace(
         y=station_data["proba_pct"],
         mode="lines",
         name="발생 확률",
-        line=dict(color="#fca5a5", width=1),
-        opacity=0.6,
+        line=dict(color="#ef4444", width=1.5),
     ),
     row=1, col=1,
 )
 
-# 7일 이동평균
-if show_ma:
-    fig.add_trace(
-        go.Scatter(
-            x=station_data["date"],
-            y=station_data["ma7_pct"],
-            mode="lines",
-            name="7일 이동평균",
-            line=dict(color="#ef4444", width=2.5),
-        ),
-        row=1, col=1,
-    )
-
 # 전국 평균
 if show_avg and len(avg_data) > 0:
-    avg_data["ma7_avg_pct"] = avg_data["national_avg_pct"].rolling(7, center=True).mean()
     fig.add_trace(
         go.Scatter(
             x=avg_data["date"],
-            y=avg_data["ma7_avg_pct"],
+            y=avg_data["national_avg_pct"],
             mode="lines",
-            name="전국 평균 (7일MA)",
+            name="전국 평균",
             line=dict(color="#94a3b8", width=1.5, dash="dot"),
         ),
         row=1, col=1,
@@ -323,7 +303,7 @@ with st.expander("⚠️ 발생 확률 수치 해석 주의"):
     )
 
 # ── 월별 위험도 히트맵 ────────────────────────────────────────────
-st.subheader("📅 월별 평균 위험도")
+st.subheader("📅 월별 평균 발생 확률")
 
 station_data["year"]  = station_data["date"].dt.year
 station_data["month"] = station_data["date"].dt.month
