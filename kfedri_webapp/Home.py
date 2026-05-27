@@ -219,7 +219,7 @@ else:
     with c4: st.metric("입력 피처",   "29개",    "기상+임상+지형")
     with c5: st.metric("고위험 지점", f"{high_risk}개", "정적 지형·임상 기준")
     st.divider()
-    st.info("📂 `v3_predictions.csv`를 data/ 폴더에 추가하면 일별 예측 확률이 표시됩니다.")
+    st.info("📂 `v3_predictions.csv`를 data/ 폴더에 추가하면 일별 발생 확률이 표시됩니다.")
 
 # ── 실시간 예측 섹션 ──────────────────────────────────────────────
 st.subheader("⚡ 실시간 예측")
@@ -341,7 +341,14 @@ else:
 
         # ── 실시간 위험도 지도 ────────────────────────────────────
         st.subheader("🗺️ 실시간 위험도 지도")
-        st.caption("위험 지점일수록 크고 선명하게, 안전 지점은 투명하게 표시됩니다.")
+        st.markdown(
+            "<span style='color:#ef4444'>●</span> **매우높음** ≥70% &nbsp;&nbsp;"
+            "<span style='color:#f97316'>●</span> **높음** 50~70% &nbsp;&nbsp;"
+            "<span style='color:#eab308'>●</span> **보통** 25~50% &nbsp;&nbsp;"
+            "<span style='color:#22c55e'>●</span> **낮음** &lt;25% &nbsp;&nbsp;"
+            "<span style='color:#64748b; font-size:12px;'>（마커 크기·투명도는 발생 확률에 비례）</span>",
+            unsafe_allow_html=True,
+        )
 
         def _risk_style(p):
             if p >= 0.70:   return "#ef4444", 14, 0.90
@@ -412,8 +419,8 @@ with g3:
             "v2 vs v3a, LogReg·LightGBM·XGBoost 비교 결과와\n"
             "피처 중요도 분석 결과를 확인합니다.")
 with g4:
-    st.info("**📈 예측 확률 추이**\n\n"
-            "지점별 날짜별 예측 확률 추이, 7일 이동평균,\n"
+    st.info("**📈 발생 확률 추이**\n\n"
+            "지점별 날짜별 발생 확률 추이, 7일 이동평균,\n"
             "실제 산불 발생 이력을 시각화합니다.")
 
 st.caption(
