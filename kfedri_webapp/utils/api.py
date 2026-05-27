@@ -70,14 +70,15 @@ def _get_date_range(days: int = LOOKBACK_DAYS, start_date=None):
     return start.strftime("%Y%m%d"), end.strftime("%Y%m%d")
 
 
-def _fetch_one(station_id: int, tm1: str, tm2: str, api_key: str) -> pd.DataFrame:
+def _fetch_all_at_once(tm1: str, tm2: str, api_key: str) -> pd.DataFrame:
+    """stn=0 으로 전체 지점 일괄 호출 — API 1번으로 완료."""
     params = {
         "tm1": tm1, "tm2": tm2,
-        "stn": str(station_id),
-        "help": "1",
+        "stn": "0",
+        "help": "0",
         "authKey": api_key,
     }
-    resp = requests.get(API_URL, params=params, timeout=60)
+    resp = requests.get(API_URL, params=params, timeout=120)
     if resp.status_code != 200:
         raise RuntimeError(f"HTTP {resp.status_code}")
 
@@ -87,11 +88,9 @@ def _fetch_one(station_id: int, tm1: str, tm2: str, api_key: str) -> pd.DataFram
     ]
     rows = [ln.split() for ln in data_lines if len(ln.split()) == len(API_COLUMNS)]
     if not rows:
-        return pd.DataFrame(columns=API_COLUMNS)
+        raise RuntimeError("API 응답에 데이터 행이 없습니다.")
 
-    df = pd.DataFrame(rows, columns=API_COLUMNS)
-    df["request_station_id"] = station_id
-    return df
+    return pd.DataFrame(rows, columns=API_COLUMNS)
 
 
 def fetch_all_stations(
@@ -102,34 +101,26 @@ def fetch_all_stations(
     progress_callback=None,
 ) -> tuple[pd.DataFrame, list]:
     """
-    전국 ASOS 지점 API 병렬 호출 (ThreadPoolExecutor).
-    start_date 지정 시 해당 날짜부터 어제까지 호출 (lookback_days 무시).
+    stn=0 으로 전체 지점을 1번 호출해 반환.
     Returns: (raw_df, failed_ids)
-    progress_callback(done, total) 으로 진행률 전달 가능.
     """
     tm1, tm2 = _get_date_range(lookback_days, start_date=start_date)
-    frames, failed = [], []
-    total = len(station_ids)
 
-    first_error = None
-    for i, sid in enumerate(station_ids):
-        try:
-            raw = _fetch_one(sid, tm1, tm2, api_key)
-            if not raw.empty:
-                frames.append(raw)
-        except Exception as e:
-            failed.append(sid)
-            if first_error is None:
-                first_error = str(e)
-        if progress_callback:
-            progress_callback(i + 1, total)
-        time.sleep(REQUEST_SLEEP)
+    if progress_callback:
+        progress_callback(0, 1)
 
-    if not frames:
-        reason = f" (원인: {first_error})" if first_error else ""
-        raise RuntimeError(f"API 호출 성공 지점이 없습니다{reason}.")
+    df = _fetch_all_at_once(tm1, tm2, api_key)
 
-    return pd.concat(frames, ignore_index=True), failed
+    if progress_callback:
+        progress_callback(1, 1)
+
+    # 요청한 지점만 필터링 & 미반환 지점 = failed
+    df["STN"] = df["STN"].astype(int)
+    df = df[df["STN"].isin(station_ids)].copy()
+    returned = set(df["STN"].unique())
+    failed   = [sid for sid in station_ids if sid not in returned]
+
+    return df, failed
 
 
 # ── 전처리 ────────────────────────────────────────────────────────
