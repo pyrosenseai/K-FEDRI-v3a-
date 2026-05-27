@@ -25,6 +25,16 @@ if not PRED_PATH.exists():
     st.stop()
 
 
+_REGION_TO_SIDO = {
+    "강원특별자치도": "강원", "경기도": "경기", "경상남도": "경남",
+    "경상북도": "경북", "광주광역시": "광주", "대구광역시": "대구",
+    "대전광역시": "대전", "부산광역시": "부산", "서울특별시": "서울",
+    "세종특별자치시": "세종", "울산광역시": "울산", "인천광역시": "인천",
+    "전라남도": "전남", "전북특별자치도": "전북", "제주특별자치도": "제주",
+    "충청남도": "충남", "충청북도": "충북",
+}
+
+
 @st.cache_data
 def load_data():
     stations = pd.read_csv(DATA_DIR / "asos_stations.csv")
@@ -38,7 +48,17 @@ def load_data():
     return stations, preds, lgbm_cols, xgb_cols, proba_cols
 
 
+@st.cache_data
+def load_fire_stats():
+    # fire_daily.csv: new.py ASOS_wildfire_merge 방식 — 시작~진화완료까지 날짜별 확장
+    p = DATA_DIR / "fire_daily.csv"
+    if not p.exists():
+        return pd.DataFrame()
+    return pd.read_csv(p, parse_dates=["date"])
+
+
 stations, preds_base, lgbm_cols, xgb_cols, proba_cols = load_data()
+fire_stats = load_fire_stats()
 
 if not proba_cols:
     st.error("예측 확률 컬럼을 찾을 수 없습니다. CSV 컬럼명을 확인하세요.")
@@ -92,8 +112,6 @@ with st.sidebar:
     )
 
     st.divider()
-
-    show_avg  = st.checkbox("전국 평균 비교", value=False)
 
     # API 연장 옵션
     if CAN_EXTEND:
@@ -201,18 +219,6 @@ if "Y_ignition" in all_stn.columns:
     fires = all_stn[all_stn["Y_ignition"] == 1].copy()
 else:
     fires = pd.DataFrame()
-
-# 전국 평균
-if show_avg:
-    avg_data = (
-        preds[preds["date"].between(start_d, end_d)]
-        .groupby("date")[model_choice]
-        .mean()
-        .reset_index()
-        .rename(columns={model_choice: "national_avg"})
-        .sort_values("date")
-    )
-    avg_data["national_avg_pct"] = avg_data["national_avg"] * 100
 
 # ── 요약 지표 ─────────────────────────────────────────────────────
 stn_info = stations[stations["station_id"] == sel_id].iloc[0]
@@ -387,9 +393,35 @@ if len(fires) > 0:
     st.subheader(f"🔥 실제 산불 발생일 상세 ({len(fires)}건)")
     fire_tbl = fires[["date", model_choice]].copy()
     fire_tbl.columns = ["발생일", "발생 확률"]
+    fire_tbl["발생일_dt"] = fire_tbl["발생일"]   # 날짜 매핑용 임시 보관
     fire_tbl["발생일"]    = fire_tbl["발생일"].dt.strftime("%Y-%m-%d")
     fire_tbl["발생 확률"] = (fire_tbl["발생 확률"] * 100).round(1)
     fire_tbl["탐지 여부"] = fire_tbl["발생 확률"].apply(
         lambda v: "✅ 탐지 (≥50%)" if v >= 50 else "❌ 미탐지 (<50%)"
     )
+
+    # 피해 면적 매핑: new.py 방식(시작~진화완료 전 날짜) 기준 fire_daily.csv 조회
+    _sido = ""
+    if not fire_stats.empty:
+        _stn_region = stations.loc[stations["station_id"] == sel_id, "region"]
+        _sido = _REGION_TO_SIDO.get(_stn_region.values[0] if len(_stn_region) else "", "")
+        if _sido:
+            _fs_sido = fire_stats[fire_stats["sido"] == _sido][["date", "total_area_ha", "fire_count"]]
+            fire_tbl = fire_tbl.merge(
+                _fs_sido, left_on="발생일_dt", right_on="date", how="left"
+            ).drop(columns=["date"])
+            fire_tbl["피해 면적 (ha)"] = fire_tbl["total_area_ha"].apply(
+                lambda v: f"{v:,.2f}" if pd.notna(v) else "–"
+            )
+            fire_tbl["동시 산불"] = fire_tbl["fire_count"].apply(
+                lambda v: f"{int(v)}건" if pd.notna(v) else "–"
+            )
+            fire_tbl = fire_tbl.drop(columns=["total_area_ha", "fire_count"])
+
+    fire_tbl = fire_tbl.drop(columns=["발생일_dt"], errors="ignore")
     st.dataframe(fire_tbl, use_container_width=True, hide_index=True)
+    if not fire_stats.empty and _sido:
+        st.caption(
+            f"피해 면적: {_sido} 시도 내 해당 날짜에 활동 중인 전체 산불 합산 "
+            "(산림청 통계 발생~진화완료 기간 기준, 2022~2025)"
+        )
