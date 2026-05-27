@@ -12,13 +12,15 @@ import joblib
 import requests
 import pandas as pd
 import numpy as np
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta
 from pathlib import Path
 
 # ── 상수 ──────────────────────────────────────────────────────────
-API_URL      = "https://apihub.kma.go.kr/api/typ01/url/kma_sfcdd3.php"
-LOOKBACK_DAYS = 40          # 이동평균 계산에 필요한 과거 일수
-REQUEST_SLEEP = 0.15        # API 지점간 딜레이 (초)
+API_URL       = "https://apihub.kma.go.kr/api/typ01/url/kma_sfcdd3.php"
+LOOKBACK_DAYS = 31          # 이동평균 계산에 필요한 과거 일수 (30일 rolling + 1)
+REQUEST_SLEEP = 0.05        # 병렬 워커 내 딜레이 (초)
+MAX_WORKERS   = 10          # 동시 API 호출 수
 
 API_COLUMNS = [
     "TM", "STN",
@@ -102,24 +104,33 @@ def fetch_all_stations(
     progress_callback=None,
 ) -> tuple[pd.DataFrame, list]:
     """
-    전국 ASOS 지점 API 일괄 호출.
+    전국 ASOS 지점 API 병렬 호출 (ThreadPoolExecutor).
     start_date 지정 시 해당 날짜부터 어제까지 호출 (lookback_days 무시).
     Returns: (raw_df, failed_ids)
     progress_callback(done, total) 으로 진행률 전달 가능.
     """
     tm1, tm2 = _get_date_range(lookback_days, start_date=start_date)
     frames, failed = [], []
+    done_count = [0]
+    total = len(station_ids)
 
-    for i, sid in enumerate(station_ids):
-        try:
-            raw = _fetch_one(sid, tm1, tm2, api_key)
-            if not raw.empty:
-                frames.append(raw)
-        except Exception:
-            failed.append(sid)
-        if progress_callback:
-            progress_callback(i + 1, len(station_ids))
+    def _fetch_with_delay(sid):
         time.sleep(REQUEST_SLEEP)
+        return sid, _fetch_one(sid, tm1, tm2, api_key)
+
+    with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
+        futures = {executor.submit(_fetch_with_delay, sid): sid for sid in station_ids}
+        for future in as_completed(futures):
+            sid = futures[future]
+            try:
+                _, raw = future.result()
+                if not raw.empty:
+                    frames.append(raw)
+            except Exception:
+                failed.append(sid)
+            done_count[0] += 1
+            if progress_callback:
+                progress_callback(done_count[0], total)
 
     if not frames:
         raise RuntimeError("API 호출 성공 지점이 없습니다.")
