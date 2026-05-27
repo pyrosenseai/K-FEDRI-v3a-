@@ -59,9 +59,14 @@ V3A_FEATURE_COLS = [
 
 # ── API 호출 ───────────────────────────────────────────────────────
 
-def _get_date_range(days: int = LOOKBACK_DAYS):
-    end   = datetime.now() - timedelta(days=1)
-    start = end - timedelta(days=days - 1)
+def _get_date_range(days: int = LOOKBACK_DAYS, start_date=None):
+    end = datetime.now() - timedelta(days=1)
+    if start_date is not None:
+        # start_date: datetime 또는 date 객체
+        start = datetime.combine(start_date, datetime.min.time()) \
+                if not isinstance(start_date, datetime) else start_date
+    else:
+        start = end - timedelta(days=days - 1)
     return start.strftime("%Y%m%d"), end.strftime("%Y%m%d")
 
 
@@ -93,14 +98,16 @@ def fetch_all_stations(
     station_ids: list,
     api_key: str,
     lookback_days: int = LOOKBACK_DAYS,
+    start_date=None,
     progress_callback=None,
 ) -> tuple[pd.DataFrame, list]:
     """
     전국 ASOS 지점 API 일괄 호출.
+    start_date 지정 시 해당 날짜부터 어제까지 호출 (lookback_days 무시).
     Returns: (raw_df, failed_ids)
     progress_callback(done, total) 으로 진행률 전달 가능.
     """
-    tm1, tm2 = _get_date_range(lookback_days)
+    tm1, tm2 = _get_date_range(lookback_days, start_date=start_date)
     frames, failed = [], []
 
     for i, sid in enumerate(station_ids):
@@ -294,3 +301,84 @@ def run_realtime_pipeline(
     result_df   = predict_today(features_df, model)
 
     return result_df, failed
+
+
+# ── 모델 파일명 → CSV 컬럼명 매핑 ─────────────────────────────────
+MODEL_COL_MAP = {
+    "lgbm_v3a": "v3a_LightGBM_proba",
+    "xgb_v3a":  "v3a_XGBoost_proba",
+}
+
+
+def predict_all_dates(
+    features_df: pd.DataFrame,
+    model,
+    feature_cols: list = V3A_FEATURE_COLS,
+) -> pd.DataFrame:
+    """
+    features_df의 모든 날짜에 대해 predict_proba.
+    (predict_today와 달리 최신 날짜만 선택하지 않음)
+    Returns: station_id, date, proba
+    """
+    valid = features_df.dropna(subset=feature_cols).copy()
+    if valid.empty:
+        raise RuntimeError("예측 가능한 행이 없습니다.")
+    proba = model.predict_proba(valid[feature_cols].values)[:, 1]
+    result = valid[["station_id", "date"]].copy()
+    result["proba"] = proba
+    return result.reset_index(drop=True)
+
+
+def run_extension_pipeline(
+    api_key: str,
+    station_ids: list,
+    imsang_df: pd.DataFrame,
+    dem_df: pd.DataFrame,
+    model_paths: dict,          # {model_stem: Path}  예: {"lgbm_v3a": Path(...)}
+    since_date,                 # date 또는 datetime: 이 날짜부터 새로 예측
+    progress_callback=None,
+) -> tuple[pd.DataFrame, list]:
+    """
+    since_date 이후 날짜를 API로 가져와 v3a 모델 예측 후 반환.
+    피처 계산을 위해 since_date 이전 LOOKBACK_DAYS만큼도 함께 호출.
+
+    Returns:
+      result_df  : station_id, date, {v3a_LightGBM_proba}, {v3a_XGBoost_proba}, ...
+      failed_ids : API 호출 실패 지점 목록
+    """
+    since_dt = (
+        datetime.combine(since_date, datetime.min.time())
+        if not isinstance(since_date, datetime) else since_date
+    )
+    fetch_start = since_dt - timedelta(days=LOOKBACK_DAYS)
+
+    raw_df, failed = fetch_all_stations(
+        station_ids, api_key,
+        start_date=fetch_start,
+        progress_callback=progress_callback,
+    )
+
+    weather_df  = build_weather_features(raw_df)
+    features_df = build_v3a_features(weather_df, imsang_df, dem_df)
+
+    # since_date 이후 행만 예측 대상으로 필터
+    new_df = features_df[features_df["date"] >= since_dt].copy()
+    if new_df.empty:
+        raise RuntimeError(
+            f"{since_dt.date()} 이후 데이터가 없습니다. "
+            "API 최신 데이터 반영 시까지 기다려주세요."
+        )
+
+    valid  = new_df.dropna(subset=V3A_FEATURE_COLS)
+    result = valid[["station_id", "date"]].copy().reset_index(drop=True)
+
+    for stem, model_path in model_paths.items():
+        col = MODEL_COL_MAP.get(stem, f"{stem}_proba")
+        try:
+            mdl   = load_model(model_path)
+            proba = mdl.predict_proba(valid[V3A_FEATURE_COLS].values)[:, 1]
+            result[col] = proba
+        except Exception as e:
+            result[col] = np.nan
+
+    return result, failed
