@@ -140,7 +140,7 @@ with col_r:
         name="전국 평균",
     ))
     fig_radar.update_layout(
-        polar=dict(radialaxis=dict(visible=True, range=[0, 0.65])),
+        polar=dict(radialaxis=dict(visible=True, range=[0, 1.0])),
         margin=dict(t=20, b=20, l=40, r=40),
         height=280,
         legend=dict(orientation="h", y=-0.15),
