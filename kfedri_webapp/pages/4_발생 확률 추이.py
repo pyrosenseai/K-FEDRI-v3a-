@@ -31,7 +31,7 @@ if not PRED_PATH.exists():
 _FOREST_API_URL = "http://apis.data.go.kr/1400000/forestStusService/getfirestatsservice"
 _FOREST_API_KEY = (
     st.secrets.get("forest", {}).get("api_key", "")
-    or "569d803e73655b06505a67206bf2ebb8c190fee6913dd5f18c740e3df97b0db4"
+  
 )
 
 
