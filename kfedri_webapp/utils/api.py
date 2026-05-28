@@ -11,7 +11,7 @@ import time
 import joblib
 import requests
 import pandas as pd
-import numpy as npa
+import numpy as np
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -251,9 +251,15 @@ def _is_logreg(model) -> bool:
 
 
 def _fit_scaler(features_df: pd.DataFrame, feature_cols: list):
-    """LOOKBACK_DAYS 분량 features 전체로 StandardScaler fit.
-    학습 scaler(2022-2024 fit)와 완전 동일하지는 않으나,
-    정적 feature(imsang/dem)는 동일 분포이고 기상 feature도 다수 표본으로 근사."""
+    """LogReg용 StandardScaler 조달.
+    1순위: `models/scaler_v3a.pkl` (학습 시 fit된 정확한 scaler) — 파일이 있으면 로드.
+    2순위: 현재 features_df로 즉석 fit (lookback이 짧으면 부정확,
+           특히 31일치 Home.py 실시간에서는 분포 압축으로 확률이 극단 쏠림).
+    정적 feature(imsang/dem)는 어느 쪽이든 거의 동일 분포."""
+    scaler_path = Path(__file__).parent.parent / "models" / "scaler_v3a.pkl"
+    if scaler_path.exists():
+        return joblib.load(scaler_path)
+
     from sklearn.preprocessing import StandardScaler
     valid_all = features_df.dropna(subset=feature_cols)
     scaler = StandardScaler()
