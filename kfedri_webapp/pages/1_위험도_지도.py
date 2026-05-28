@@ -17,12 +17,12 @@ MODELS_DIR = Path(__file__).parents[1] / "models"
 PRED_PATH  = DATA_DIR / "v3_predictions.csv"
 
 _avail_models = {}
-for _stem in ["lgbm_v3a", "xgb_v3a"]:
+for _stem in ["lgbm_v3a", "xgb_v3a", "lgr_v3a"]:
     _p = MODELS_DIR / f"{_stem}.pkl"
     if _p.exists():
         _avail_models[_stem] = _p
 
-_STEM_LABEL  = {"lgbm_v3a": "LightGBM v3a", "xgb_v3a": "XGBoost v3a"}
+_STEM_LABEL  = {"lgbm_v3a": "LightGBM v3a", "xgb_v3a": "XGBoost v3a", "lgr_v3a": "LogReg v3a"}
 HAS_PRED     = PRED_PATH.exists()
 HAS_MODEL    = len(_avail_models) > 0
 HAS_APIKEY   = "kma" in st.secrets and "api_key" in st.secrets.get("kma", {})
@@ -89,8 +89,8 @@ with st.sidebar:
         "예측 기간",
         ["2025년 예측", "2026년 예측 (API)"],
         help=(
-            "2025년: 학습 모델 테스트 기간 예측 결과 (v3_predictions.csv, 2022~2025)\n\n"
-            "2026년: 기상청 API 실시간 확장 예측 (2025-09-12 이후)"
+            "2025년: 학습된 v3a 모델의 Hold-out Test 예측 결과 (2025-01-01 ~ 2025-09-11)\n\n"
+            "2026년: 기상청 API 실시간 확장 예측 (2026-01-01 이후)"
         ),
     )
     st.divider()
@@ -163,10 +163,10 @@ with st.sidebar:
     st.divider()
     st.caption("색상 기준 (모델 발생 확률)")
     st.markdown(
-        "<span style='color:#22c55e'>●</span> ~ 25% &nbsp; "
-        "<span style='color:#eab308'>●</span> 25 ~ 50% &nbsp; "
-        "<span style='color:#f97316'>●</span> 50 ~ 70% &nbsp; "
-        "<span style='color:#ef4444'>●</span> 70% +",
+        "<span style='color:#22c55e'>●</span> ~25% &nbsp; "
+        "<span style='color:#eab308'>●</span> 25~50% &nbsp; "
+        "<span style='color:#f97316'>●</span> 50~70% &nbsp; "
+        "<span style='color:#ef4444'>●</span> 70%+",
         unsafe_allow_html=True,
     )
 
@@ -178,7 +178,7 @@ if run_ext_btn and CAN_EXTEND:
         _dem    = pd.read_csv(DATA_DIR / "asos_dem_features.csv")
         _key    = st.secrets["kma"]["api_key"]
 
-        with st.spinner(f"API 연장 예측 중… ({_2026_START} ~ 어제)"):
+        with st.spinner(f"API 연장 예측 중… ({_since_date.date()} ~ 어제)"):
             ext_df, ext_failed = run_extension_pipeline(
                 api_key=_key,
                 station_ids=static_data["station_id"].tolist(),
