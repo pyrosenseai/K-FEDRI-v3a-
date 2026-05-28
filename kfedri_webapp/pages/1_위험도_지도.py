@@ -138,9 +138,9 @@ with st.sidebar:
     else:
         st.caption("색상 기준 (모델 발생 확률)")
         st.markdown(
-            "<span style='color:#22c55e'>●</span> ~25% & nbsp; "
-            "<span style='color:#eab308'>●</span> 25 ~ 50% & nbsp; "
-            "<span style='color:#f97316'>●</span> 50 ~ 70% & nbsp; "
+            "<span style='color:#22c55e'>●</span> ~25% &nbsp; "
+            "<span style='color:#eab308'>●</span> 25 ~ 50% &nbsp; "
+            "<span style='color:#f97316'>●</span> 50 ~ 70% &nbsp; "
             "<span style='color:#ef4444'>●</span> 70% +",
             unsafe_allow_html=True,
         )
