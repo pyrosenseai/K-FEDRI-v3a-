@@ -35,12 +35,19 @@ _FOREST_API_KEY = (
 )
 
 
-def _fetch_fire_ignitions(st_dt: _date, ed_dt: _date, station_df: pd.DataFrame) -> pd.DataFrame:
+def _fetch_fire_ignitions(
+    st_dt: _date, ed_dt: _date, station_df: pd.DataFrame
+) -> tuple:
     """
-    산림청 산불발생통계정보 API → ASOS station_id별 Y_ignition DataFrame 반환.
-    locgungu(시군구) == station_name 직접 매칭 (학습 파이프라인 동일 방식).
-    Returns: DataFrame(station_id, date, Y_ignition=1) or empty DataFrame
+    산림청 산불발생통계정보 API 단일 호출 → (ignitions_df, daily_stats_df) 반환.
+
+    ignitions_df : DataFrame(station_id, date, Y_ignition=1)
+                   locgungu == station_name 직접 매칭 (학습 파이프라인 동일 방식)
+    daily_stats_df: DataFrame(date, sido, total_area_ha, fire_count)
+                   fire_daily.csv 동일 스키마 — 연장 기간 피해 면적·동시 산불 표시용
+                   (발생일 기준 집계; 진화완료일까지 확장은 원본 fire_daily.csv 사용)
     """
+    _empty = pd.DataFrame(), pd.DataFrame()
     try:
         params = {
             "serviceKey": _FOREST_API_KEY,
@@ -53,12 +60,12 @@ def _fetch_fire_ignitions(st_dt: _date, ed_dt: _date, station_df: pd.DataFrame) 
         root = ET.fromstring(resp.text)
         items = root.findall(".//item")
         if not items:
-            return pd.DataFrame()
+            return _empty
 
         rows = [{c.tag: c.text for c in item} for item in items]
         fires = pd.DataFrame(rows)
 
-        # 발생일 파싱
+        # ── 발생일 파싱 ──────────────────────────────────────────────
         fires["date"] = pd.to_datetime(
             fires["startyear"].str.strip() + "-" +
             fires["startmonth"].str.strip() + "-" +
@@ -66,9 +73,27 @@ def _fetch_fire_ignitions(st_dt: _date, ed_dt: _date, station_df: pd.DataFrame) 
             errors="coerce",
         )
         fires = fires.dropna(subset=["date"])
-        fires["locgungu"] = fires["locgungu"].str.strip()
 
-        # locgungu → station_id 매칭 (station_name과 직접 비교)
+        # ── ① daily_stats_df: 시도별 일별 피해면적·건수 ──────────────
+        fires["sido"] = (
+            fires["locsi"].str.strip()
+            .map(_REGION_TO_SIDO)
+            .fillna(fires["locsi"].str.strip())
+        )
+        fires["damagearea"] = pd.to_numeric(
+            fires["damagearea"] if "damagearea" in fires.columns else 0,
+            errors="coerce",
+        ).fillna(0)
+
+        daily_stats = (
+            fires.groupby(["date", "sido"])
+            .agg(total_area_ha=("damagearea", "sum"),
+                 fire_count=("damagearea", "count"))
+            .reset_index()
+        )
+
+        # ── ② ignitions_df: locgungu → station_id 매칭 ───────────────
+        fires["locgungu"] = fires["locgungu"].str.strip()
         stn = station_df[["station_id", "station_name"]].copy()
         stn["station_name"] = stn["station_name"].str.strip()
         matched = fires.merge(
@@ -76,14 +101,14 @@ def _fetch_fire_ignitions(st_dt: _date, ed_dt: _date, station_df: pd.DataFrame) 
             on="locgungu", how="inner",
         )
         if matched.empty:
-            return pd.DataFrame()
+            return pd.DataFrame(), daily_stats
 
-        result = matched[["station_id", "date"]].drop_duplicates().copy()
-        result["Y_ignition"] = 1
-        return result.reset_index(drop=True)
+        ignitions = matched[["station_id", "date"]].drop_duplicates().copy()
+        ignitions["Y_ignition"] = 1
+        return ignitions.reset_index(drop=True), daily_stats
 
     except Exception:
-        return pd.DataFrame()
+        return _empty
 
 
 _REGION_TO_SIDO = {
@@ -222,14 +247,17 @@ if extend_api and CAN_EXTEND:
                 st.error(f"연장 예측 오류: {_e}")
                 st.session_state[cache_key] = pd.DataFrame()
 
-    # ── ② 산림청 API → 산불 발생 이력 (Y_ignition) ──────────────
+    # ── ② 산림청 API → 산불 발생 이력 (Y_ignition) + 시도별 일별 통계 ──
     if fire_cache_key not in st.session_state:
         with st.spinner(
             f"산림청 산불 이력 조회 중… ({since_date.date()} ~ 어제)"
         ):
             _yesterday = _date.today() - timedelta(days=1)
-            _fire_ext  = _fetch_fire_ignitions(since_date.date(), _yesterday, stations)
-            st.session_state[fire_cache_key] = _fire_ext
+            _fire_ext, _fire_daily_ext = _fetch_fire_ignitions(
+                since_date.date(), _yesterday, stations
+            )
+            st.session_state[fire_cache_key]               = _fire_ext
+            st.session_state[f"{fire_cache_key}_daily"]    = _fire_daily_ext
 
     # ── ③ 예측 + 산불이력 결합 후 기존 데이터에 이어붙이기 ────────
     _ext       = st.session_state.get(cache_key, pd.DataFrame())
@@ -495,30 +523,48 @@ if len(fires) > 0:
         lambda v: round(v * 100, 1) if pd.notna(v) else None
     )
 
-    # 피해 면적 매핑: new.py 방식(시작~진화완료 전 날짜) 기준 fire_daily.csv 조회
-    _sido = ""
-    if not fire_stats.empty:
-        _stn_region = stations.loc[stations["station_id"] == sel_id, "region"]
-        _sido = _REGION_TO_SIDO.get(_stn_region.values[0] if len(_stn_region) else "", "")
-        if _sido:
-            _fs_sido = fire_stats[fire_stats["sido"] == _sido][["date", "total_area_ha", "fire_count"]]
-            fire_tbl = fire_tbl.merge(
-                _fs_sido, left_on="발생일_dt", right_on="date", how="left"
-            ).drop(columns=["date"])
-            fire_tbl["피해 면적 (ha)"] = fire_tbl["total_area_ha"].apply(
-                lambda v: f"{v:,.2f}" if pd.notna(v) else "–"
-            )
-            fire_tbl["동시 산불"] = fire_tbl["fire_count"].apply(
-                lambda v: f"{int(v)}건" if pd.notna(v) else "–"
-            )
-            fire_tbl = fire_tbl.drop(columns=["total_area_ha", "fire_count"])
+    # ── 피해 면적·동시 산불 매핑 ─────────────────────────────────────
+    # fire_daily.csv(2022~2025-09-11) + 연장 기간 API 통계 합산하여 조회
+    _stn_region = stations.loc[stations["station_id"] == sel_id, "region"]
+    _sido = _REGION_TO_SIDO.get(_stn_region.values[0] if len(_stn_region) else "", "")
+
+    # 연장 기간용 시도별 통계 가져오기 (있는 경우)
+    _fire_cache_key_daily = f"ext_fires_{preds_base['date'].max().date() + timedelta(days=1)}_daily"
+    _ext_daily = st.session_state.get(_fire_cache_key_daily, pd.DataFrame())
+
+    # 기존 fire_daily.csv 에 연장 데이터 보충
+    _fire_stats_eff = (
+        pd.concat([fire_stats, _ext_daily], ignore_index=True)
+        .drop_duplicates(subset=["date", "sido"])
+        if (not fire_stats.empty and not _ext_daily.empty)
+        else fire_stats if not fire_stats.empty
+        else _ext_daily
+    )
+
+    if _sido and not _fire_stats_eff.empty:
+        _fs_sido = _fire_stats_eff[_fire_stats_eff["sido"] == _sido][
+            ["date", "total_area_ha", "fire_count"]
+        ]
+        fire_tbl = fire_tbl.merge(
+            _fs_sido, left_on="발생일_dt", right_on="date", how="left"
+        ).drop(columns=["date"])
+        fire_tbl["피해 면적 (ha)"] = fire_tbl["total_area_ha"].apply(
+            lambda v: f"{v:,.2f}" if pd.notna(v) else "–"
+        )
+        fire_tbl["동시 산불"] = fire_tbl["fire_count"].apply(
+            lambda v: f"{int(v)}건" if pd.notna(v) else "–"
+        )
+        fire_tbl = fire_tbl.drop(columns=["total_area_ha", "fire_count"])
 
     fire_tbl = fire_tbl.drop(columns=["발생일_dt"], errors="ignore")
     st.dataframe(fire_tbl, use_container_width=True, hide_index=True)
-    if not fire_stats.empty and _sido:
+
+    if _sido and not _fire_stats_eff.empty:
+        _caption_src = "산림청 통계 발생~진화완료 기간 기준, 2022~2025"
+        if not _ext_daily.empty:
+            _caption_src += " + API 연장분(발생일 기준)"
         st.caption(
-            f"피해 면적: {_sido} 시도 내 해당 날짜에 활동 중인 전체 산불 합산 "
-            "(산림청 통계 발생~진화완료 기간 기준, 2022~2025)"
+            f"피해 면적: {_sido} 시도 내 해당 날짜 활동 산불 합산 ({_caption_src})"
         )
     # 연장 기간(API)은 v3a LightGBM/XGBoost만 제공 — 다른 모델 선택 시 안내
     if extend_api and CAN_EXTEND and model_choice not in {"v3a_LightGBM_proba", "v3a_XGBoost_proba"}:
