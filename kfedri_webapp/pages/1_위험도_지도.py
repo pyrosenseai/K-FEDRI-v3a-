@@ -74,6 +74,9 @@ _preds_max   = preds_df["date"].max()
 _since_date  = _preds_max + timedelta(days=1)
 _ext_key     = f"ext_preds_{_since_date.date()}"
 
+# 1페이지 "2026년 예측" 모드는 2026-01-01 이후 데이터만 표시
+_2026_START  = pd.Timestamp("2026-01-01")
+
 # ── 사이드바 ───────────────────────────────────────────────────────
 run_ext_btn  = False
 sel_date     = None
@@ -106,22 +109,40 @@ with st.sidebar:
     elif data_mode == "2026년 예측 (API)":
         _ext_data = st.session_state.get(_ext_key)
 
-        if _ext_data is not None and not _ext_data.empty:
-            # ── 캐시 있음: 날짜·모델 선택 ──────────────────────────
-            _ext_proba_cols = [c for c in _ext_data.columns if "proba" in c.lower()]
+        # 2026년 1월 1일 이후 데이터만 추출
+        _ext_2026 = (
+            _ext_data[_ext_data["date"] >= _2026_START].copy()
+            if (_ext_data is not None and not _ext_data.empty)
+            else None
+        )
+
+        if _ext_2026 is not None and not _ext_2026.empty:
+            # ── 캐시 있음 (2026년 데이터 포함): 날짜·모델 선택 ──────
+            _ext_proba_cols = [c for c in _ext_2026.columns if "proba" in c.lower()]
             model_choice = st.selectbox(
                 "모델", _ext_proba_cols, format_func=col_label,
                 help="API 연장 기간은 v3a LightGBM / XGBoost만 제공됩니다.",
             )
-            _ext_min_d = _ext_data["date"].min().date()
-            _ext_max_d = _ext_data["date"].max().date()
+            _ext_min_d = _ext_2026["date"].min().date()
+            _ext_max_d = _ext_2026["date"].max().date()
             sel_date = st.date_input(
                 "날짜",
                 value=_ext_max_d,
                 min_value=_ext_min_d,
                 max_value=_ext_max_d,
             )
-            st.caption(f"API 데이터: {_ext_min_d} ~ {_ext_max_d}")
+            st.caption(f"2026년 API 데이터: {_ext_min_d} ~ {_ext_max_d}")
+        elif _ext_data is not None and not _ext_data.empty:
+            # ── API 데이터 있지만 2026년 데이터 없음 ─────────────────
+            st.warning(
+                f"API 데이터가 2025년({_ext_data['date'].max().date()})까지만 있습니다.\n\n"
+                "API를 다시 불러오면 2026년 데이터가 포함될 수 있습니다."
+            )
+            run_ext_btn = st.button(
+                "🔄 API 다시 불러오기",
+                use_container_width=True,
+                type="primary",
+            )
         elif CAN_EXTEND:
             st.info(
                 "4페이지에서 **📡 API 연장 예측 포함**을 체크하거나,\n"
@@ -187,16 +208,22 @@ if data_mode == "2025년 예측" and sel_date and model_choice:
     date_label = f"{sel_date}  ·  {col_label(model_choice)}  ·  2025년 예측"
 
 elif data_mode == "2026년 예측 (API)" and sel_date and model_choice:
+    # 2026년 이후 데이터만 사용
     _ext_data = st.session_state.get(_ext_key)
-    if _ext_data is not None and not _ext_data.empty:
+    _ext_2026 = (
+        _ext_data[_ext_data["date"] >= _2026_START]
+        if (_ext_data is not None and not _ext_data.empty)
+        else None
+    )
+    if _ext_2026 is not None and not _ext_2026.empty:
         day_ext = (
-            _ext_data[_ext_data["date"] == pd.Timestamp(sel_date)]
+            _ext_2026[_ext_2026["date"] == pd.Timestamp(sel_date)]
             [["station_id", model_choice]]
             .rename(columns={model_choice: "proba"})
         )
         map_df     = map_df.merge(day_ext, on="station_id", how="left")
         map_df["map_score"] = map_df["proba"]
-        date_label = f"{sel_date}  ·  {col_label(model_choice)}  ·  API 연장"
+        date_label = f"{sel_date}  ·  {col_label(model_choice)}  ·  2026년 API"
     else:
         map_df["map_score"] = np.nan
 else:
