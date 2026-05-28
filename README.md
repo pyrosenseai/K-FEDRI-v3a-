@@ -15,3 +15,13 @@ plotly>=5.18.0
 folium>=0.16.0
 
 streamlit-folium>=0.18.0
+
+requests>=2.31.0
+
+joblib>=1.3.0
+
+scikit-learn>=1.3.0
+
+lightgbm>=4.0.0
+
+xgboost>=2.0.0
