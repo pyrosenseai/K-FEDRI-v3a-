@@ -430,6 +430,83 @@ else:
 
 st.divider()
 
+# ── 연도별 산불 피해 현황 ──────────────────────────────────────────
+@st.cache_data
+def load_fire_stats():
+    p = DATA_DIR / "fire_stats.csv"
+    if not p.exists():
+        return None
+    return pd.read_csv(p, parse_dates=["date"])
+
+_fire_stats = load_fire_stats()
+
+if _fire_stats is not None:
+    st.subheader("🌲 연도별 산불 피해 현황 (2022~2025)")
+
+    _annual = (
+        _fire_stats.groupby(_fire_stats["date"].dt.year)
+        .agg(발생건수=("area_ha", "count"), 피해면적=("area_ha", "sum"))
+        .reset_index()
+        .rename(columns={"date": "연도"})
+    )
+    _annual["연도"] = _annual["연도"].astype(str)
+    _annual["피해면적"] = _annual["피해면적"].round(1)
+
+    # 요약 지표
+    _latest_yr = _annual.iloc[-1]
+    _fs1, _fs2, _fs3, _fs4 = st.columns(4)
+    _fs1.metric("총 산불 건수 (2022~)", f"{_annual['발생건수'].sum():,}건")
+    _fs2.metric("총 피해 면적 (2022~)", f"{_annual['피해면적'].sum():,.0f} ha")
+    _fs3.metric(f"{_latest_yr['연도']}년 발생 건수", f"{int(_latest_yr['발생건수']):,}건")
+    _fs4.metric(f"{_latest_yr['연도']}년 피해 면적", f"{_latest_yr['피해면적']:,.1f} ha")
+
+    _fc1, _fc2 = st.columns(2)
+    with _fc1:
+        _fig_cnt = px.bar(
+            _annual, x="연도", y="발생건수",
+            color="발생건수",
+            color_continuous_scale=["#fde68a", "#f97316", "#ef4444"],
+            text="발생건수",
+            title="연도별 발생 건수",
+        )
+        _fig_cnt.update_traces(textposition="outside")
+        _fig_cnt.update_layout(
+            height=280, coloraxis_showscale=False,
+            margin=dict(t=40, b=10, l=10, r=10),
+            yaxis_title="건수",
+        )
+        st.plotly_chart(_fig_cnt, use_container_width=True)
+
+    with _fc2:
+        _fig_area = px.bar(
+            _annual, x="연도", y="피해면적",
+            color="피해면적",
+            color_continuous_scale=["#fde68a", "#f97316", "#ef4444"],
+            text="피해면적",
+            title="연도별 피해 면적 (ha)",
+        )
+        _fig_area.update_traces(texttemplate="%{text:,.0f} ha", textposition="outside")
+        _fig_area.update_layout(
+            height=280, coloraxis_showscale=False,
+            margin=dict(t=40, b=10, l=10, r=10),
+            yaxis_title="면적 (ha)",
+        )
+        st.plotly_chart(_fig_area, use_container_width=True)
+
+    # 시도별 피해 현황
+    with st.expander("📋 시도별 피해 면적 상세"):
+        _sido_tbl = (
+            _fire_stats.groupby("sido")
+            .agg(건수=("area_ha", "count"), 피해면적=("area_ha", "sum"))
+            .reset_index()
+            .rename(columns={"sido": "시도"})
+            .sort_values("피해면적", ascending=False)
+        )
+        _sido_tbl["피해면적"] = _sido_tbl["피해면적"].round(1)
+        st.dataframe(_sido_tbl, use_container_width=True, hide_index=True)
+
+st.divider()
+
 # ── 기능 안내 카드 ─────────────────────────────────────────────────
 st.subheader("📌 주요 기능")
 g1, g2, g3, g4 = st.columns(4)
