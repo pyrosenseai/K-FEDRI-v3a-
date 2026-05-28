@@ -4,7 +4,9 @@ import numpy as np
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 from pathlib import Path
-from datetime import timedelta
+from datetime import timedelta, date as _date
+import requests
+import xml.etree.ElementTree as ET
 from utils.style import apply_dark_theme, PLOTLY_BG, PLOTLY_PAPER_BG
 
 st.set_page_config(page_title="발생 확률 추이", page_icon="📈", layout="wide")
@@ -23,6 +25,65 @@ if not PRED_PATH.exists():
         "```\nD:\\K_FEDRI_v3\\v3_predictions.csv\n```"
     )
     st.stop()
+
+
+# ── 산림청 산불이력 API ────────────────────────────────────────────
+_FOREST_API_URL = "http://apis.data.go.kr/1400000/forestStusService/getfirestatsservice"
+_FOREST_API_KEY = (
+    st.secrets.get("forest", {}).get("api_key", "")
+    or "569d803e73655b06505a67206bf2ebb8c190fee6913dd5f18c740e3df97b0db4"
+)
+
+
+def _fetch_fire_ignitions(st_dt: _date, ed_dt: _date, station_df: pd.DataFrame) -> pd.DataFrame:
+    """
+    산림청 산불발생통계정보 API → ASOS station_id별 Y_ignition DataFrame 반환.
+    locgungu(시군구) == station_name 직접 매칭 (학습 파이프라인 동일 방식).
+    Returns: DataFrame(station_id, date, Y_ignition=1) or empty DataFrame
+    """
+    try:
+        params = {
+            "serviceKey": _FOREST_API_KEY,
+            "numOfRows": "1000",
+            "pageNo": "1",
+            "searchStDt": st_dt.strftime("%Y%m%d"),
+            "searchEdDt": ed_dt.strftime("%Y%m%d"),
+        }
+        resp = requests.get(_FOREST_API_URL, params=params, timeout=30)
+        root = ET.fromstring(resp.text)
+        items = root.findall(".//item")
+        if not items:
+            return pd.DataFrame()
+
+        rows = [{c.tag: c.text for c in item} for item in items]
+        fires = pd.DataFrame(rows)
+
+        # 발생일 파싱
+        fires["date"] = pd.to_datetime(
+            fires["startyear"].str.strip() + "-" +
+            fires["startmonth"].str.strip() + "-" +
+            fires["startday"].str.strip(),
+            errors="coerce",
+        )
+        fires = fires.dropna(subset=["date"])
+        fires["locgungu"] = fires["locgungu"].str.strip()
+
+        # locgungu → station_id 매칭 (station_name과 직접 비교)
+        stn = station_df[["station_id", "station_name"]].copy()
+        stn["station_name"] = stn["station_name"].str.strip()
+        matched = fires.merge(
+            stn.rename(columns={"station_name": "locgungu"}),
+            on="locgungu", how="inner",
+        )
+        if matched.empty:
+            return pd.DataFrame()
+
+        result = matched[["station_id", "date"]].drop_duplicates().copy()
+        result["Y_ignition"] = 1
+        return result.reset_index(drop=True)
+
+    except Exception:
+        return pd.DataFrame()
 
 
 _REGION_TO_SIDO = {
@@ -133,10 +194,12 @@ if extend_api and CAN_EXTEND:
     last_date  = preds["date"].max()
     since_date = last_date + timedelta(days=1)
     cache_key  = f"ext_preds_{since_date.date()}"
+    fire_cache_key = f"ext_fires_{since_date.date()}"
 
+    # ── ① 기상 API → 모델 예측 확장 ─────────────────────────────
     if cache_key not in st.session_state:
         with st.spinner(
-            f"API 연장 예측 중… "
+            f"기상 API 연장 예측 중… "
             f"({since_date.date()} ~ 어제, {len(_avail_models)}개 모델)"
         ):
             try:
@@ -159,21 +222,48 @@ if extend_api and CAN_EXTEND:
                 st.error(f"연장 예측 오류: {_e}")
                 st.session_state[cache_key] = pd.DataFrame()
 
-    _ext = st.session_state.get(cache_key, pd.DataFrame())
+    # ── ② 산림청 API → 산불 발생 이력 (Y_ignition) ──────────────
+    if fire_cache_key not in st.session_state:
+        with st.spinner(
+            f"산림청 산불 이력 조회 중… ({since_date.date()} ~ 어제)"
+        ):
+            _yesterday = _date.today() - timedelta(days=1)
+            _fire_ext  = _fetch_fire_ignitions(since_date.date(), _yesterday, stations)
+            st.session_state[fire_cache_key] = _fire_ext
+
+    # ── ③ 예측 + 산불이력 결합 후 기존 데이터에 이어붙이기 ────────
+    _ext       = st.session_state.get(cache_key, pd.DataFrame())
+    _fire_ext  = st.session_state.get(fire_cache_key, pd.DataFrame())
+
     if not _ext.empty:
+        # 예측 DataFrame에 Y_ignition 컬럼 추가
+        if not _fire_ext.empty:
+            _ext = _ext.merge(_fire_ext, on=["station_id", "date"], how="left")
+        if "Y_ignition" not in _ext.columns:
+            _ext["Y_ignition"] = 0
+        else:
+            _ext["Y_ignition"] = _ext["Y_ignition"].fillna(0).astype(int)
+
         preds = (
             pd.concat([preds, _ext], ignore_index=True, sort=False)
             .drop_duplicates(subset=["station_id", "date"])
             .sort_values(["station_id", "date"])
             .reset_index(drop=True)
         )
+        # Y_ignition 결측(기존 데이터에만 있던 NaN) 처리
+        if "Y_ignition" in preds.columns:
+            preds["Y_ignition"] = preds["Y_ignition"].fillna(0).astype(int)
+
         # 연장된 proba 컬럼 반영
         proba_cols = [c for c in preds.columns if "proba" in c.lower()]
         _failed_n  = len(st.session_state.get(f"{cache_key}_failed", []))
+        _fire_n    = len(_fire_ext) if not _fire_ext.empty else 0
+        _fire_stn  = _fire_ext["station_id"].nunique() if not _fire_ext.empty else 0
         ext_banner = (
             f"📡 API 연장: {since_date.date()} ~ {_ext['date'].max().date()} "
             f"({len(_ext['date'].unique())}일 추가"
-            + (f", 실패 {_failed_n}개 지점" if _failed_n else "") + ")"
+            + (f", 실패 {_failed_n}개 지점" if _failed_n else "")
+            + f") · 🔥 산림청 산불이력 {_fire_n}건 / {_fire_stn}개 지점 반영"
         )
 
 # ── 사이드바 Part 2: 날짜 범위 (연장된 preds 기준) ───────────────
