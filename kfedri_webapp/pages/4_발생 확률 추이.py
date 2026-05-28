@@ -29,10 +29,7 @@ if not PRED_PATH.exists():
 
 # ── 산림청 산불이력 API ────────────────────────────────────────────
 _FOREST_API_URL = "http://apis.data.go.kr/1400000/forestStusService/getfirestatsservice"
-_FOREST_API_KEY = (
-    st.secrets.get("forest", {}).get("api_key", "")
-  
-)
+_FOREST_API_KEY = st.secrets.get("forest", {}).get("api_key", "")
 
 
 def _fetch_fire_ignitions(
@@ -48,6 +45,8 @@ def _fetch_fire_ignitions(
                    (발생일 기준 집계; 진화완료일까지 확장은 원본 fire_daily.csv 사용)
     """
     _empty = pd.DataFrame(), pd.DataFrame()
+    if not _FOREST_API_KEY:
+        return _empty   # secrets에 [forest] api_key 미등록
     try:
         params = {
             "serviceKey": _FOREST_API_KEY,
@@ -566,11 +565,11 @@ if len(fires) > 0:
     st.dataframe(fire_tbl, use_container_width=True, hide_index=True)
 
     if _sido and not _fire_stats_eff.empty:
-        _caption_src = "산림청 통계 발생~진화완료 기간 기준, 2022~2025"
+        _caption_src = "산림청 통계 발생일 기준 집계, 2022~2025"
         if not _ext_daily.empty:
             _caption_src += " + API 연장분(발생일 기준)"
         st.caption(
-            f"피해 면적: {_sido} 시도 내 해당 날짜 활동 산불 합산 ({_caption_src})"
+            f"피해 면적·동시 산불: {_sido} 시도 내 해당 날짜 발생 산불 합산 ({_caption_src})"
         )
     # 연장 기간(API)은 v3a LightGBM/XGBoost만 제공 — 다른 모델 선택 시 안내
     if extend_api and CAN_EXTEND and model_choice not in {"v3a_LightGBM_proba", "v3a_XGBoost_proba"}:
