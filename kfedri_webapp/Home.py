@@ -21,15 +21,22 @@ MODELS_DIR = Path(__file__).parent / "models"
 PRED_PATH  = DATA_DIR / "v3_predictions.csv"
 
 # 실시간 예측에 사용할 모델 파일 (있는 것 모두 감지)
+# LogReg는 학습 StandardScaler가 필수 — `models/scaler_v3a.pkl` 있을 때만 활성화.
+# (scaler 없이 31일 lookback으로 fit하면 분포 압축으로 확률이 100%에 쏠림)
 AVAILABLE_MODELS = {}
+_SCALER_OK = (MODELS_DIR / "scaler_v3a.pkl").exists()
 for _label, _stem in [
     ("LightGBM v3a", "lgbm_v3a"),
     ("XGBoost v3a",  "xgb_v3a"),
     ("LogReg v3a",   "lgr_v3a"),
 ]:
     _p = MODELS_DIR / f"{_stem}.pkl"
-    if _p.exists():
-        AVAILABLE_MODELS[_label] = _p
+    if not _p.exists():
+        continue
+    # LogReg는 scaler 파일이 있을 때만 추가
+    if _stem == "lgr_v3a" and not _SCALER_OK:
+        continue
+    AVAILABLE_MODELS[_label] = _p
 HAS_MODEL = len(AVAILABLE_MODELS) > 0
 HAS_APIKEY = "kma" in st.secrets and "api_key" in st.secrets.get("kma", {})
 
