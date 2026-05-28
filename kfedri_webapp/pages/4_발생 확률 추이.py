@@ -8,6 +8,7 @@ from datetime import timedelta, date as _date
 import requests
 import xml.etree.ElementTree as ET
 from utils.style import apply_dark_theme, PLOTLY_BG, PLOTLY_PAPER_BG
+from utils.api import MODEL_COL_MAP
 
 st.set_page_config(page_title="발생 확률 추이", page_icon="📈", layout="wide")
 apply_dark_theme()
@@ -135,7 +136,8 @@ def load_data():
 
 @st.cache_data
 def load_fire_stats():
-    # fire_daily.csv: new.py ASOS_wildfire_merge 방식 — 시작~진화완료까지 날짜별 확장
+    # fire_daily.csv: 산림청 통계 발생일 기준 (date, sido) 집계
+    # 컬럼: date, sido, total_area_ha, fire_count
     p = DATA_DIR / "fire_daily.csv"
     if not p.exists():
         return pd.DataFrame()
@@ -153,7 +155,7 @@ if not proba_cols:
 # ── 모델 파일 감지 (API 연장 가능 여부) ──────────────────────────
 MODELS_DIR = Path(__file__).parents[1] / "models"
 _avail_models = {}
-for _stem in ["lgbm_v3a", "xgb_v3a"]:
+for _stem in ["lgbm_v3a", "xgb_v3a", "lgr_v3a"]:
     _p = MODELS_DIR / f"{_stem}.pkl"
     if _p.exists():
         _avail_models[_stem] = _p
@@ -565,15 +567,24 @@ if len(fires) > 0:
     st.dataframe(fire_tbl, use_container_width=True, hide_index=True)
 
     if _sido and not _fire_stats_eff.empty:
-        _caption_src = "산림청 통계 발생일 기준 집계, 2022~2025"
+        _fs_yr_min = int(fire_stats["date"].dt.year.min()) if not fire_stats.empty else None
+        _fs_yr_max = int(fire_stats["date"].dt.year.max()) if not fire_stats.empty else None
+        _caption_src = (
+            f"산림청 통계 발생일 기준 집계, {_fs_yr_min}~{_fs_yr_max}"
+            if _fs_yr_min is not None
+            else "산림청 통계 발생일 기준 집계"
+        )
         if not _ext_daily.empty:
             _caption_src += " + API 연장분(발생일 기준)"
         st.caption(
             f"피해 면적·동시 산불: {_sido} 시도 내 해당 날짜 발생 산불 합산 ({_caption_src})"
         )
-    # 연장 기간(API)은 v3a LightGBM/XGBoost만 제공 — 다른 모델 선택 시 안내
-    if extend_api and CAN_EXTEND and model_choice not in {"v3a_LightGBM_proba", "v3a_XGBoost_proba"}:
+    # 연장 기간(API) 지원 모델 안내
+    _ext_supported = {
+        MODEL_COL_MAP[s]: s for s in _avail_models.keys() if s in MODEL_COL_MAP
+    } if _avail_models else {}
+    if extend_api and CAN_EXTEND and model_choice not in _ext_supported:
         st.caption(
-            "ℹ️ API 연장 기간(산림청 이력)은 **v3a LightGBM / XGBoost** 예측만 제공됩니다. "
+            "ℹ️ API 연장 기간은 `models/` 폴더에 존재하는 모델만 제공됩니다. "
             "선택한 모델의 연장 발생일은 '예측 없음'으로 표시됩니다."
         )
