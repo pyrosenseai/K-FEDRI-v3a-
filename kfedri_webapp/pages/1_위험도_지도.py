@@ -178,7 +178,7 @@ if run_ext_btn and CAN_EXTEND:
         _dem    = pd.read_csv(DATA_DIR / "asos_dem_features.csv")
         _key    = st.secrets["kma"]["api_key"]
 
-        with st.spinner(f"API 연장 예측 중… (_2026_START ~ 어제)"):
+        with st.spinner(f"API 연장 예측 중… ({_2026_START} ~ 어제)"):
             ext_df, ext_failed = run_extension_pipeline(
                 api_key=_key,
                 station_ids=static_data["station_id"].tolist(),
