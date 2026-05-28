@@ -483,14 +483,20 @@ station_data["month"] = station_data["date"].dt.month
 
 heatmap_df = (
     station_data.groupby(["year", "month"])[model_choice]
-    .mean().unstack("month").fillna(0)
+    .mean().unstack("month")       # NaN = 해당 (연·월) 데이터 없음 — fillna(0) 금지
 ) * 100
 
 month_labels = ["1월","2월","3월","4월","5월","6월",
                 "7월","8월","9월","10월","11월","12월"]
 
+# NaN 셀은 "–"로 표시, 유효값만 색상 적용
+_hm_text = [
+    [f"{v:.1f}%" if pd.notna(v) else "–" for v in row]
+    for row in heatmap_df.values
+]
+
 fig_hm = go.Figure(go.Heatmap(
-    z=heatmap_df.values,
+    z=heatmap_df.values,           # NaN → Plotly가 자동으로 빈 셀 처리
     x=[month_labels[m - 1] for m in heatmap_df.columns],
     y=[str(y) for y in heatmap_df.index],
     zmin=0, zmax=100,
@@ -498,7 +504,7 @@ fig_hm = go.Figure(go.Heatmap(
         [0.0, "#f0fdf4"], [0.25, "#86efac"],
         [0.5, "#fde68a"], [0.75, "#f97316"], [1.0, "#7f1d1d"],
     ],
-    text=[[f"{v:.1f}%" for v in row] for row in heatmap_df.values],
+    text=_hm_text,
     texttemplate="%{text}",
     hovertemplate="<b>%{y}년 %{x}</b><br>평균 발생 확률: %{z:.1f}%<extra></extra>",
     colorbar=dict(title="발생 확률 (%)"),
