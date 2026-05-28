@@ -11,7 +11,7 @@ import time
 import joblib
 import requests
 import pandas as pd
-import numpy as np
+import numpy as npa
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -245,6 +245,22 @@ def load_model(model_path: Path):
     return joblib.load(model_path)
 
 
+def _is_logreg(model) -> bool:
+    """LogisticRegression 여부 판별 — 스케일링 적용 대상."""
+    return type(model).__name__ == "LogisticRegression"
+
+
+def _fit_scaler(features_df: pd.DataFrame, feature_cols: list):
+    """LOOKBACK_DAYS 분량 features 전체로 StandardScaler fit.
+    학습 scaler(2022-2024 fit)와 완전 동일하지는 않으나,
+    정적 feature(imsang/dem)는 동일 분포이고 기상 feature도 다수 표본으로 근사."""
+    from sklearn.preprocessing import StandardScaler
+    valid_all = features_df.dropna(subset=feature_cols)
+    scaler = StandardScaler()
+    scaler.fit(valid_all[feature_cols].values)
+    return scaler
+
+
 def predict_today(
     features_df: pd.DataFrame,
     model,
@@ -252,6 +268,7 @@ def predict_today(
 ) -> pd.DataFrame:
     """
     최신 날짜 행만 필터링 → predict_proba → 결과 반환.
+    LogReg 모델인 경우 features_df 전체(~31일치)로 fit한 StandardScaler 적용.
     Returns DataFrame with columns: station_id, date, proba
     """
     latest_date = features_df["date"].max()
@@ -264,6 +281,12 @@ def predict_today(
         raise RuntimeError(f"{latest_date.date()} 날짜에 예측 가능한 지점이 없습니다.")
 
     X = valid[feature_cols].values
+
+    # LogReg는 StandardScaler 필요 — lookback 전체로 fit
+    if _is_logreg(model):
+        scaler = _fit_scaler(features_df, feature_cols)
+        X = scaler.transform(X)
+
     proba = model.predict_proba(X)[:, 1]
 
     result = valid[["station_id", "date"]].copy()
@@ -303,6 +326,7 @@ def run_realtime_pipeline(
 MODEL_COL_MAP = {
     "lgbm_v3a": "v3a_LightGBM_proba",
     "xgb_v3a":  "v3a_XGBoost_proba",
+    "lgr_v3a":  "v3a_LogReg_proba",
 }
 
 
@@ -368,11 +392,22 @@ def run_extension_pipeline(
     valid  = new_df.dropna(subset=V3A_FEATURE_COLS)
     result = valid[["station_id", "date"]].copy().reset_index(drop=True)
 
+    # LogReg용 스케일러 — features_df 전체(LOOKBACK_DAYS + 연장기간)로 fit
+    # 트리 모델(LGBM·XGB)에는 영향 없으므로 LogReg 있을 때만 lazy-fit
+    _scaler = None
+    X_raw = valid[V3A_FEATURE_COLS].values
+
     for stem, model_path in model_paths.items():
         col = MODEL_COL_MAP.get(stem, f"{stem}_proba")
         try:
-            mdl   = load_model(model_path)
-            proba = mdl.predict_proba(valid[V3A_FEATURE_COLS].values)[:, 1]
+            mdl = load_model(model_path)
+            if _is_logreg(mdl):
+                if _scaler is None:
+                    _scaler = _fit_scaler(features_df, V3A_FEATURE_COLS)
+                X_use = _scaler.transform(X_raw)
+            else:
+                X_use = X_raw
+            proba = mdl.predict_proba(X_use)[:, 1]
             result[col] = proba
         except Exception as e:
             result[col] = np.nan
