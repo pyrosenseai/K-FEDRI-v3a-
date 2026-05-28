@@ -22,7 +22,11 @@ PRED_PATH  = DATA_DIR / "v3_predictions.csv"
 
 # 실시간 예측에 사용할 모델 파일 (있는 것 모두 감지)
 AVAILABLE_MODELS = {}
-for _label, _stem in [("LightGBM v3a", "lgbm_v3a"), ("XGBoost v3a", "xgb_v3a")]:
+for _label, _stem in [
+    ("LightGBM v3a", "lgbm_v3a"),
+    ("XGBoost v3a",  "xgb_v3a"),
+    ("LogReg v3a",   "lgr_v3a"),
+]:
     _p = MODELS_DIR / f"{_stem}.pkl"
     if _p.exists():
         AVAILABLE_MODELS[_label] = _p
@@ -441,7 +445,9 @@ def load_fire_stats():
 _fire_stats = load_fire_stats()
 
 if _fire_stats is not None:
-    st.subheader("🌲 연도별 산불 피해 현황 (2022~2025)")
+    _yr_min = int(_fire_stats["date"].dt.year.min())
+    _yr_max = int(_fire_stats["date"].dt.year.max())
+    st.subheader(f"🌲 연도별 산불 피해 현황 ({_yr_min}~{_yr_max})")
 
     _annual = (
         _fire_stats.groupby(_fire_stats["date"].dt.year)
@@ -455,8 +461,8 @@ if _fire_stats is not None:
     # 요약 지표
     _latest_yr = _annual.iloc[-1]
     _fs1, _fs2, _fs3, _fs4 = st.columns(4)
-    _fs1.metric("총 산불 건수 (2022~)", f"{_annual['발생건수'].sum():,}건")
-    _fs2.metric("총 피해 면적 (2022~)", f"{_annual['피해면적'].sum():,.0f} ha")
+    _fs1.metric(f"총 산불 건수 ({_yr_min}~)", f"{_annual['발생건수'].sum():,}건")
+    _fs2.metric(f"총 피해 면적 ({_yr_min}~)", f"{_annual['피해면적'].sum():,.0f} ha")
     _fs3.metric(f"{_latest_yr['연도']}년 발생 건수", f"{int(_latest_yr['발생건수']):,}건")
     _fs4.metric(f"{_latest_yr['연도']}년 피해 면적", f"{_latest_yr['피해면적']:,.1f} ha")
 
