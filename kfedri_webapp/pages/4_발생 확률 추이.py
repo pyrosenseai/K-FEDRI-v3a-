@@ -485,9 +485,14 @@ if len(fires) > 0:
     fire_tbl.columns = ["발생일", "발생 확률"]
     fire_tbl["발생일_dt"] = fire_tbl["발생일"]   # 날짜 매핑용 임시 보관
     fire_tbl["발생일"]    = fire_tbl["발생일"].dt.strftime("%Y-%m-%d")
-    fire_tbl["발생 확률"] = (fire_tbl["발생 확률"] * 100).round(1)
+    # 탐지 여부 — NaN 처리 포함, 반드시 * 100 변환 전에 계산
     fire_tbl["탐지 여부"] = fire_tbl["발생 확률"].apply(
-        lambda v: "✅ 탐지 (≥50%)" if v >= 50 else "❌ 미탐지 (<50%)"
+        lambda v: "✅ 탐지 (≥50%)" if pd.notna(v) and v >= 0.5
+                  else ("❌ 미탐지 (<50%)" if pd.notna(v) else "ℹ️ 예측 없음")
+    )
+    # 백분율 변환 (NaN은 None 유지 — Streamlit이 빈 셀로 표시)
+    fire_tbl["발생 확률"] = fire_tbl["발생 확률"].apply(
+        lambda v: round(v * 100, 1) if pd.notna(v) else None
     )
 
     # 피해 면적 매핑: new.py 방식(시작~진화완료 전 날짜) 기준 fire_daily.csv 조회
@@ -514,4 +519,10 @@ if len(fires) > 0:
         st.caption(
             f"피해 면적: {_sido} 시도 내 해당 날짜에 활동 중인 전체 산불 합산 "
             "(산림청 통계 발생~진화완료 기간 기준, 2022~2025)"
+        )
+    # 연장 기간(API)은 v3a LightGBM/XGBoost만 제공 — 다른 모델 선택 시 안내
+    if extend_api and CAN_EXTEND and model_choice not in {"v3a_LightGBM_proba", "v3a_XGBoost_proba"}:
+        st.caption(
+            "ℹ️ API 연장 기간(산림청 이력)은 **v3a LightGBM / XGBoost** 예측만 제공됩니다. "
+            "선택한 모델의 연장 발생일은 '예측 없음'으로 표시됩니다."
         )
