@@ -174,7 +174,9 @@ if has_preds and proba_cols:
             return styles
 
         st.dataframe(
-            top_tbl.style.apply(highlight_prob, subset=["발생 확률"]),
+            top_tbl.style
+                .apply(highlight_prob, subset=["발생 확률"])
+                .format({"발생 확률": "{:.1f}%"}),
             use_container_width=True,
             hide_index=True,
         )
@@ -408,7 +410,9 @@ else:
                 ]
 
             st.dataframe(
-                tbl.style.apply(highlight_prob, subset=["발생 확률"]),
+                tbl.style
+                    .apply(highlight_prob, subset=["발생 확률"])
+                    .format({"발생 확률": "{:.1f}%"}),
                 use_container_width=True, hide_index=True,
             )
             st.caption("🗺️ 지도 시각화는 **위험도 지도** 페이지에서 확인하세요.")
